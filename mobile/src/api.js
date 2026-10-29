@@ -83,3 +83,14 @@ export const uploadTransaction = async (entry) => {
   });
   return parseResponse(response);
 };
+
+export const uploadReturn = async (entry) => {
+  const form = new FormData();
+  form.set('payload', JSON.stringify(entry.payload));
+  if (entry.photo) form.set('photo', entry.photo, 'foto-barang-lama.jpg');
+  const response = await withTimeout(
+    `${await server()}/api/mobile/v1/returns/${entry.transaction_id}`,
+    { method: 'POST', headers: await authHeaders(), body: form },
+  );
+  return parseResponse(response);
+};

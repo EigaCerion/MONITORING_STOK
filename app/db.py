@@ -254,6 +254,21 @@ CREATE TABLE IF NOT EXISTS pengembalian (
 );
 CREATE INDEX IF NOT EXISTS ix_kembali_trx ON pengembalian(transaksi_id);
 
+-- Pengembalian yang dicatat kemudian dari APK juga memakai UUID idempoten.
+-- Retry setelah sinyal putus mengembalikan catatan lama, bukan menggandakan bukti.
+CREATE TABLE IF NOT EXISTS mobile_return_submissions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_uuid    TEXT NOT NULL UNIQUE,
+    device_id      INTEGER NOT NULL REFERENCES mobile_devices(id),
+    user_id        INTEGER NOT NULL REFERENCES users(id),
+    transaction_id INTEGER NOT NULL REFERENCES transactions(id),
+    return_id      INTEGER NOT NULL REFERENCES pengembalian(id),
+    payload_hash   TEXT NOT NULL,
+    received_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS ix_mobile_return_submissions_device
+    ON mobile_return_submissions(device_id, received_at);
+
 -- Penghitung nomor dokumen (mis. bon per hari). Nomor tidak pernah dipakai ulang walau bon digabung.
 CREATE TABLE IF NOT EXISTS penomoran (
     kunci TEXT PRIMARY KEY,

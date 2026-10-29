@@ -10,7 +10,7 @@ from flask import Blueprint, g, jsonify, request
 from werkzeug.security import check_password_hash
 
 from .db import audit, get_db, mobile_pengaturan, tx
-from .mobile_sync import MobileSyncError, save_submission
+from .mobile_sync import MobileSyncError, save_return_submission, save_submission
 from .stock import StockError, bulat
 
 
@@ -167,6 +167,22 @@ def bootstrap():
                  WHERE active=1 AND plant IN ({marks}) ORDER BY plant,target_type,code""",
             plants,
         ).fetchall()]
+    pending_args = []
+    pending_plant = ""
+    if user["kebun_kode"]:
+        pending_plant = " AND m.plant=?"
+        pending_args.append(user["kebun_kode"])
+    pending_returns = [dict(row) for row in db.execute(
+        f"""SELECT t.id AS transaction_id,t.bon,t.tanggal,t.qty AS qty_out,t.penerima,
+                   m.id AS material_id,m.material,m.deskripsi,m.satuan,m.plant
+            FROM transactions t JOIN materials m ON m.id=t.material_id
+            WHERE t.jenis='keluar' AND t.batal=0 AND m.wajib_kembali=1
+              AND NOT EXISTS (SELECT 1 FROM pengembalian p
+                              WHERE p.transaksi_id=t.id AND p.batal=0)
+              {pending_plant}
+            ORDER BY t.tanggal,t.id""",
+        pending_args,
+    ).fetchall()]
     settings = mobile_pengaturan(db)
     db.execute(
         """UPDATE mobile_devices SET last_sync_at=datetime('now','localtime'), app_version=?,
@@ -185,6 +201,7 @@ def bootstrap():
         "user": {"id": user["id"], "name": user["nama"], "role": user["role"], "plant": user["kebun_kode"]},
         "materials": materials,
         "targets": targets,
+        "pending_returns": pending_returns,
         "fixed_targets": [
             {"type": "workshop", "code": "CM3AZGO996", "name": "GOH-WORKSHOP"},
             {"type": "office", "code": "CM3AZGO992", "name": "GOH-OFFICE LABOUR"},
@@ -211,6 +228,24 @@ def transactions():
         return jsonify(result)
     except json.JSONDecodeError:
         return _json_error("Payload transaksi tidak dapat dibaca")
+    except MobileSyncError as exc:
+        return _json_error(str(exc), exc.status, **exc.extra)
+    except StockError as exc:
+        return _json_error(str(exc), 400)
+
+
+@bp.post("/returns/<int:transaction_id>")
+@mobile_auth_required
+def returns(transaction_id):
+    """Terima pengembalian menyusul dari antrean APK secara idempoten."""
+    try:
+        payload = json.loads(request.form.get("payload") or "{}")
+        result = save_return_submission(
+            get_db(), g.user, g.mobile_device, transaction_id, payload, request.files.get("photo"),
+        )
+        return jsonify(result)
+    except json.JSONDecodeError:
+        return _json_error("Payload pengembalian tidak dapat dibaca")
     except MobileSyncError as exc:
         return _json_error(str(exc), exc.status, **exc.extra)
     except StockError as exc:

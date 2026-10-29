@@ -331,3 +331,82 @@ def save_submission(db, user, device, payload, photo_1, photo_2=None, return_pho
         "transaction_ids": transaction_ids,
         "message": f"{bon} berhasil diunggah ke server",
     }
+
+
+def _existing_return_submission(db, client_uuid, expected_hash):
+    """Kembalikan pengembalian lama untuk retry atau tolak UUID dengan isi berbeda."""
+    row = db.execute(
+        "SELECT * FROM mobile_return_submissions WHERE client_uuid=?", (client_uuid,),
+    ).fetchone()
+    if not row:
+        return None
+    if row["payload_hash"] != expected_hash:
+        raise MobileSyncError("Identitas pengembalian sudah dipakai untuk isi yang berbeda", 409)
+    return {
+        "ok": True, "already_received": True, "return_id": row["return_id"],
+        "transaction_id": row["transaction_id"],
+    }
+
+
+def save_return_submission(db, user, device, transaction_id, payload, photo=None):
+    """Catat pengembalian yang menyusul dari antrean APK secara idempoten."""
+    if not isinstance(payload, dict):
+        raise MobileSyncError("Payload pengembalian tidak valid")
+    client_uuid = _parse_uuid(payload.get("client_uuid"))
+    expected_hash = payload_hash(payload)
+    existing = _existing_return_submission(db, client_uuid, expected_hash)
+    if existing:
+        return existing
+
+    row = db.execute(
+        """SELECT t.*, m.material, m.deskripsi, m.satuan, m.plant, m.wajib_kembali
+           FROM transactions t JOIN materials m ON m.id=t.material_id WHERE t.id=?""",
+        (transaction_id,),
+    ).fetchone()
+    if not row or row["jenis"] != "keluar" or row["batal"]:
+        raise MobileSyncError("Transaksi keluar tidak ditemukan atau sudah dibatalkan", 404)
+    if user.get("kebun_kode") and row["plant"] != user["kebun_kode"]:
+        raise MobileSyncError("Transaksi berada di kebun yang tidak boleh diakses", 403)
+    if db.execute(
+        "SELECT 1 FROM pengembalian WHERE transaksi_id=? AND batal=0 LIMIT 1", (transaction_id,),
+    ).fetchone():
+        raise MobileSyncError("Pengembalian untuk transaksi ini sudah tercatat", 409)
+
+    data, error = pengembalian.baca(
+        payload.get("qty"), payload.get("condition"), row["qty"], True, row["deskripsi"],
+    )
+    if error or not data:
+        raise MobileSyncError(error or "Isi qty dan kondisi barang lama")
+    if pengembalian.ada_barang(data) and not (photo and photo.filename):
+        raise MobileSyncError("Foto barang lama wajib karena ada barang lama yang dikembalikan")
+    date = _parse_date(payload.get("date"))
+    image = save_photo(photo, metadata_time=payload.get("photo_time")) if photo and photo.filename else None
+
+    with tx(db):
+        existing = _existing_return_submission(db, client_uuid, expected_hash)
+        if existing:
+            return existing
+        if db.execute(
+            "SELECT 1 FROM pengembalian WHERE transaksi_id=? AND batal=0 LIMIT 1", (transaction_id,),
+        ).fetchone():
+            raise MobileSyncError("Pengembalian untuk transaksi ini sudah tercatat", 409)
+        return_id = pengembalian.simpan(
+            db, transaction_id, row["material_id"], date, data[0], data[1],
+            str(payload.get("note") or "").strip(), image,
+            str(payload.get("returned_by") or "").strip() or row["penerima"], user["id"],
+        )
+        db.execute(
+            """INSERT INTO mobile_return_submissions
+               (client_uuid,device_id,user_id,transaction_id,return_id,payload_hash)
+               VALUES (?,?,?,?,?,?)""",
+            (client_uuid, device["id"], user["id"], transaction_id, return_id, expected_hash),
+        )
+        db.execute(
+            "INSERT INTO mobile_sync_log (device_id,user_id,action,detail) VALUES (?,?,?,?)",
+            (device["id"], user["id"], "upload_return", f"trx#{transaction_id}; kembali#{return_id}"),
+        )
+        audit(db, user["id"], "pengembalian_apk", f"trx#{transaction_id} {row['material']}: {data[0]:g} {data[1]}")
+    return {
+        "ok": True, "already_received": False, "return_id": return_id,
+        "transaction_id": transaction_id, "message": "Pengembalian barang lama diterima server",
+    }

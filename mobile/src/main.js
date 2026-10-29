@@ -4,7 +4,9 @@ import {
   clearAuth, deleteQueue, getCache, getOrCreateDeviceId, getQueue, getSetting,
   listQueue, putQueue, setCache, setSetting,
 } from './db.js';
-import { bootstrap as fetchBootstrap, health, login, normalizeServerUrl, uploadTransaction } from './api.js';
+import {
+  bootstrap as fetchBootstrap, health, login, normalizeServerUrl, uploadReturn, uploadTransaction,
+} from './api.js';
 import { compressPhoto } from './photos.js';
 import { checkUpdate, compareVersions, downloadUpdate } from './update.js';
 
@@ -16,6 +18,7 @@ const RETURN_CONDITIONS = [
 const NO_PHYSICAL_RETURN = new Set(['Hilang / tidak dikembalikan', 'Tidak ada — pekerja baru / tambahan']);
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const numberValue = (value) => Number(String(value ?? '').replace(',', '.'));
 
 const state = {
   bootstrap: null,
@@ -25,6 +28,7 @@ const state = {
   targets: [],
   defaultTarget: null,
   editingItemIndex: null,
+  returnDraft: { transaction: null, photo: null },
   photos: { photo: null, photo_2: null, return_photo: null },
   update: null,
 };
@@ -62,6 +66,7 @@ const go = (name) => {
   $$('.screen').forEach((screen) => screen.classList.toggle('active', screen.id === `screen${name[0].toUpperCase()}${name.slice(1)}`));
   $$('.bottom-nav button').forEach((button) => button.classList.toggle('active', button.dataset.screen === name));
   if (name === 'queue') renderQueue();
+  if (name === 'returns') renderPendingReturns();
   if (name === 'input') renderInputAvailability();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
@@ -102,6 +107,9 @@ const renderHome = async () => {
   $('#appVersion').textContent = `v${APP_VERSION}`;
   $('#materialCount').textContent = state.bootstrap?.materials?.length ?? 0;
   $('#pendingCount').textContent = pendingQueue().length;
+  const queuedReturns = new Set(pendingQueue().filter((entry) => entry.kind === 'return').map((entry) => entry.transaction_id));
+  const pendingReturns = (state.bootstrap?.pending_returns || []).filter((row) => !queuedReturns.has(row.transaction_id));
+  $('#pendingReturnCount').textContent = pendingReturns.length;
   const ready = todayReady();
   $('#syncState').textContent = ready ? '✓' : '!';
   $('#syncState').classList.toggle('ok', ready);
@@ -156,6 +164,16 @@ const filteredMaterials = (query) => {
     return words.every((word) => haystack.includes(word));
   }).slice(0, 30);
 };
+
+const requiresUnitOrWorkshop = (material) => {
+  const category = normalizeTargetText(material?.kategori).replace(/[^A-Z0-9]/g, '');
+  const description = normalizeTargetText(material?.deskripsi);
+  return ['BBM', 'SPAREPART'].includes(category) || description.includes('FAME');
+};
+
+const physicalReturnPresent = () => state.items.some((item) => item.return_enabled
+  && item.return_condition && !NO_PHYSICAL_RETURN.has(item.return_condition)
+  && numberValue(item.return_qty) > 0);
 
 const renderMaterialResults = () => {
   const results = filteredMaterials($('#materialSearch').value);
@@ -326,10 +344,26 @@ const addMaterial = (material) => {
       && item.target?.type === target?.type && item.target?.code === target?.code)) {
     toast('Barang dengan tujuan yang sama sudah ada; ubah tujuan dahulu untuk membaginya'); return;
   }
-  state.items.push({ material, qty: '', target, return_qty: '', return_condition: '' });
+  state.items.push({
+    material, qty: '', target,
+    return_enabled: Boolean(material.wajib_kembali), return_qty: '', return_qty_touched: false,
+    return_condition: '',
+  });
   $('#materialSearch').value = '';
   $('#materialResults').hidden = true;
   renderItems();
+};
+
+const splitItemToAnotherTarget = (itemIndex) => {
+  const source = state.items[itemIndex];
+  if (!source) return;
+  state.items.splice(itemIndex + 1, 0, {
+    material: source.material, qty: '', target: null,
+    return_enabled: Boolean(source.material.wajib_kembali), return_qty: '', return_qty_touched: false,
+    return_condition: '',
+  });
+  renderItems();
+  openTargetDialog(itemIndex + 1);
 };
 
 const closeTargetDialog = () => {
@@ -385,7 +419,7 @@ const renderItems = () => {
   const list = $('#selectedItems');
   list.replaceChildren();
   state.items.forEach((item, index) => {
-    const card = document.createElement('div'); card.className = 'item-card';
+    const card = document.createElement('div'); card.className = 'item-card'; card.dataset.itemIndex = String(index);
     const head = document.createElement('div'); head.className = 'item-head';
     const title = document.createElement('div');
     const name = document.createElement('b'); name.textContent = item.material.deskripsi;
@@ -396,9 +430,17 @@ const renderItems = () => {
     head.append(title, remove);
 
     const meta = document.createElement('div'); meta.className = 'item-meta';
+    let returnQtyInput = null;
     const qtyLabel = document.createElement('label'); qtyLabel.textContent = `Qty (${item.material.satuan})`;
     const qty = document.createElement('input'); qty.inputMode = 'decimal'; qty.value = item.qty; qty.placeholder = '0';
-    qty.addEventListener('input', () => { state.items[index].qty = qty.value; });
+    qty.addEventListener('input', () => {
+      state.items[index].qty = qty.value;
+      if (item.material.wajib_kembali && !state.items[index].return_qty_touched) {
+        state.items[index].return_qty = qty.value;
+        if (returnQtyInput) returnQtyInput.value = qty.value;
+      }
+      updateStockHints(); renderReturnPhoto();
+    });
     qtyLabel.append(qty);
     const targetLabelNode = document.createElement('label'); targetLabelNode.textContent = 'Tujuan barang';
     targetLabelNode.append(targetButton(item, index));
@@ -415,11 +457,47 @@ const renderItems = () => {
       activityLabel.append(activity); meta.append(activityLabel);
     }
 
-    if (item.material.wajib_kembali) {
+    const actions = document.createElement('div'); actions.className = 'item-actions';
+    const split = document.createElement('button'); split.type = 'button'; split.className = 'item-link'; split.textContent = '+ Bagi ke tujuan lain';
+    split.addEventListener('click', () => splitItemToAnotherTarget(index));
+    actions.append(split);
+    if (!item.return_enabled) {
+      const addReturn = document.createElement('button'); addReturn.type = 'button'; addReturn.className = 'item-link';
+      addReturn.textContent = '+ Ada barang lama dikembalikan';
+      addReturn.addEventListener('click', () => {
+        state.items[index].return_enabled = true;
+        state.items[index].return_qty = state.items[index].qty;
+        renderItems();
+      });
+      actions.append(addReturn);
+    }
+    meta.append(actions);
+
+    if (item.return_enabled) {
       const returns = document.createElement('div'); returns.className = 'return-fields';
+      const returnHead = document.createElement('div'); returnHead.className = 'return-head';
+      const returnTitle = document.createElement('b');
+      returnTitle.textContent = item.material.wajib_kembali ? '↩ Barang lama · wajib tukar' : '↩ Barang lama · opsional';
+      returnHead.append(returnTitle);
+      if (!item.material.wajib_kembali) {
+        const cancelReturn = document.createElement('button'); cancelReturn.type = 'button'; cancelReturn.className = 'item-link danger-link'; cancelReturn.textContent = 'Batalkan';
+        cancelReturn.addEventListener('click', () => {
+          state.items[index].return_enabled = false;
+          state.items[index].return_qty = '';
+          state.items[index].return_qty_touched = false;
+          state.items[index].return_condition = '';
+          renderItems();
+        });
+        returnHead.append(cancelReturn);
+      }
       const returnQtyLabel = document.createElement('label'); returnQtyLabel.textContent = 'Qty barang lama';
       const returnQty = document.createElement('input'); returnQty.inputMode = 'decimal'; returnQty.value = item.return_qty; returnQty.placeholder = '0';
-      returnQty.addEventListener('input', () => { state.items[index].return_qty = returnQty.value; renderReturnPhoto(); });
+      returnQty.className = 'return-qty-input'; returnQtyInput = returnQty;
+      returnQty.addEventListener('input', () => {
+        state.items[index].return_qty = returnQty.value;
+        state.items[index].return_qty_touched = true;
+        renderReturnPhoto();
+      });
       returnQtyLabel.append(returnQty);
       const conditionLabel = document.createElement('label'); conditionLabel.textContent = 'Kondisi barang lama';
       const condition = document.createElement('select'); condition.add(new Option('— pilih kondisi —', ''));
@@ -427,19 +505,41 @@ const renderItems = () => {
       condition.value = item.return_condition;
       condition.addEventListener('change', () => { state.items[index].return_condition = condition.value; renderReturnPhoto(); });
       conditionLabel.append(condition);
-      returns.append(returnQtyLabel, conditionLabel); meta.append(returns);
+      returns.append(returnHead, returnQtyLabel, conditionLabel); meta.append(returns);
     }
-    card.append(head, meta); list.append(card);
+    const stockHint = document.createElement('small'); stockHint.className = 'item-stock-hint';
+    card.append(head, meta, stockHint); list.append(card);
   });
   $('#emptyItems').hidden = state.items.length > 0;
+  updateStockHints();
   renderReturnPhoto();
 };
 
+const updateStockHints = () => {
+  const totals = new Map();
+  state.items.forEach((item) => totals.set(
+    item.material.id, (totals.get(item.material.id) || 0) + (numberValue(item.qty) || 0),
+  ));
+  $$('.item-card').forEach((card) => {
+    const item = state.items[Number(card.dataset.itemIndex)];
+    if (!item) return;
+    const total = totals.get(item.material.id) || 0;
+    const remaining = Number(item.material.stok) - total;
+    const splitCount = state.items.filter((row) => row.material.id === item.material.id).length;
+    const hint = card.querySelector('.item-stock-hint');
+    hint.textContent = `${splitCount > 1 ? `Total dibagi ${total} · ` : ''}Sisa ${Math.round(remaining * 1000) / 1000} ${item.material.satuan}`;
+    hint.classList.toggle('danger-text', remaining < 0);
+  });
+};
+
 const renderReturnPhoto = () => {
-  const required = state.items.some((item) => item.material.wajib_kembali
-    && item.return_condition && !NO_PHYSICAL_RETURN.has(item.return_condition)
-    && Number(String(item.return_qty).replace(',', '.')) > 0);
-  $('#returnPhotoBlock').hidden = !required;
+  const visible = state.items.some((item) => item.return_enabled);
+  const required = physicalReturnPresent();
+  $('#returnPhotoBlock').hidden = !visible;
+  $('#returnPhotoRequired').hidden = !required;
+  $('#returnPhotoHint').textContent = required
+    ? 'Wajib karena ada barang lama yang benar-benar diserahkan.'
+    : 'Tidak wajib untuk kondisi “Hilang” atau “Tidak ada — pekerja baru”.';
 };
 
 const bindPhoto = (cameraSelector, gallerySelector, previewSelector, stateKey) => {
@@ -459,20 +559,142 @@ const bindPhoto = (cameraSelector, gallerySelector, previewSelector, stateKey) =
   $(gallerySelector).addEventListener('change', handler);
 };
 
+const availablePendingReturns = () => {
+  const queued = new Set(pendingQueue().filter((entry) => entry.kind === 'return').map((entry) => entry.transaction_id));
+  return (state.bootstrap?.pending_returns || []).filter((row) => !queued.has(row.transaction_id));
+};
+
+const renderPendingReturns = () => {
+  const rows = availablePendingReturns();
+  const list = $('#pendingReturnList'); list.replaceChildren();
+  $('#returnsBadge').textContent = `${rows.length} barang`;
+  $('#returnsEmpty').hidden = rows.length > 0;
+  rows.forEach((row) => {
+    const card = document.createElement('div'); card.className = 'queue-card';
+    const head = document.createElement('div'); head.className = 'queue-head';
+    const title = document.createElement('div');
+    const name = document.createElement('b'); name.textContent = row.deskripsi;
+    const detail = document.createElement('small');
+    detail.textContent = `${row.bon || `Transaksi #${row.transaction_id}`} · keluar ${row.qty_out} ${row.satuan} · ${row.penerima || '-'}`;
+    title.append(name, detail);
+    const date = document.createElement('span'); date.className = 'status-pill warn'; date.textContent = row.tanggal;
+    head.append(title, date);
+    const action = document.createElement('button'); action.type = 'button'; action.className = 'btn primary block'; action.textContent = 'Catat pengembalian';
+    action.addEventListener('click', () => openReturnDialog(row));
+    card.append(head, action); list.append(card);
+  });
+};
+
+const renderLaterReturnPhotoRule = () => {
+  const condition = $('#laterReturnCondition').value;
+  const required = Boolean(condition && !NO_PHYSICAL_RETURN.has(condition));
+  $('#laterReturnPhotoRequired').hidden = !required;
+  $('#laterReturnPhotoHint').textContent = required
+    ? 'Foto wajib karena barang lama benar-benar diserahkan.'
+    : 'Foto tidak wajib untuk kondisi “Hilang” atau “Tidak ada — pekerja baru”.';
+};
+
+const openReturnDialog = (row) => {
+  state.returnDraft = { transaction: row, photo: null };
+  $('#returnDialogTitle').textContent = row.deskripsi;
+  $('#returnDialogInfo').textContent = `${row.bon || `Transaksi #${row.transaction_id}`} · keluar ${row.qty_out} ${row.satuan} · ${row.penerima || '-'}`;
+  $('#laterReturnQty').value = row.qty_out;
+  $('#laterReturnCondition').value = '';
+  $('#laterReturnedBy').value = row.penerima || '';
+  $('#laterReturnDate').value = localDate();
+  $('#laterReturnNote').value = '';
+  $('#laterReturnPhotoPreview').hidden = true;
+  $('#laterReturnPhotoPreview').removeAttribute('src');
+  renderLaterReturnPhotoRule();
+  $('#returnDialog').showModal();
+};
+
+const closeReturnDialog = () => {
+  state.returnDraft = { transaction: null, photo: null };
+  $('#returnDialog').close();
+};
+
+const bindLaterReturnPhoto = () => {
+  const handler = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const photo = await compressPhoto(file);
+      state.returnDraft.photo = photo;
+      $('#laterReturnPhotoPreview').src = photo.preview;
+      $('#laterReturnPhotoPreview').hidden = false;
+      toast('Foto barang lama siap disimpan offline');
+    } catch (error) { showDialog('Foto gagal dibaca', error.message); }
+    event.target.value = '';
+  };
+  $('#laterReturnPhotoCamera').addEventListener('change', handler);
+  $('#laterReturnPhotoGallery').addEventListener('change', handler);
+};
+
+const saveLaterReturnDraft = async () => {
+  const row = state.returnDraft.transaction;
+  if (!row) throw new Error('Transaksi pengembalian tidak ditemukan');
+  const condition = $('#laterReturnCondition').value;
+  const qty = numberValue($('#laterReturnQty').value);
+  if (!condition) throw new Error('Pilih kondisi barang lama');
+  if (!NO_PHYSICAL_RETURN.has(condition)) {
+    if (!(qty > 0)) throw new Error('Isi qty barang lama yang dikembalikan');
+    if (qty > Number(row.qty_out)) throw new Error('Qty barang lama melebihi qty barang keluar');
+    if (!state.returnDraft.photo) throw new Error('Foto barang lama wajib diambil');
+  }
+  const date = $('#laterReturnDate').value;
+  if (!date || date > localDate()) throw new Error('Tanggal pengembalian tidak valid');
+  const clientUuid = crypto.randomUUID();
+  const entry = {
+    kind: 'return', client_uuid: clientUuid, transaction_id: row.transaction_id,
+    owner_user_id: state.bootstrap.user.id, status: 'pending', created_at: new Date().toISOString(),
+    payload: {
+      client_uuid: clientUuid, date, qty: qty > 0 ? qty : 0, condition,
+      returned_by: $('#laterReturnedBy').value.trim(), note: $('#laterReturnNote').value.trim(),
+      photo_time: state.returnDraft.photo?.captured_at || '',
+    },
+    summary: [{
+      material: row.material, description: row.deskripsi, qty: row.qty_out, unit: row.satuan,
+      return_qty: qty > 0 ? qty : 0, return_condition: condition,
+    }],
+    photo: state.returnDraft.photo?.blob || null, error: '', server_result: null,
+  };
+  await putQueue(entry);
+  state.queue = await listQueue();
+  closeReturnDialog();
+  await renderHome(); renderPendingReturns(); renderQueue();
+  toast('Pengembalian tersimpan di antrean HP');
+  go('queue');
+};
+
 const validateDraft = () => {
   if (!todayReady()) throw new Error('Lakukan Sinkron pagi terlebih dahulu');
   if (updateMandatory()) throw new Error('Perbarui aplikasi ke versi minimum yang ditentukan Admin');
   if (!state.items.length) throw new Error('Tambahkan minimal satu barang');
   const totalByMaterial = new Map();
+  const targetKeys = new Set();
   for (const item of state.items) {
-    const qty = Number(String(item.qty).replace(',', '.'));
+    const qty = numberValue(item.qty);
     if (!(qty > 0)) throw new Error(`${item.material.deskripsi}: isi qty yang benar`);
     if (qty > Number(item.material.stok)) throw new Error(`${item.material.deskripsi}: qty melebihi stok hasil sinkron`);
     if (!item.target) throw new Error(`${item.material.deskripsi}: pilih tujuan barang`);
+    const targetKey = `${item.material.id}|${item.target.type}|${item.target.code}|${item.target.activity || ''}`;
+    if (targetKeys.has(targetKey)) throw new Error(`${item.material.deskripsi}: tujuan yang sama tercantum dua kali`);
+    targetKeys.add(targetKey);
+    if (requiresUnitOrWorkshop(item.material) && !['unit', 'workshop'].includes(item.target.type)) {
+      throw new Error(`${item.material.deskripsi}: FAME, BBM, dan sparepart wajib ke Unit atau Workshop`);
+    }
     if (item.target.type === 'damkar' && !['330', '331'].includes(item.target.activity)) {
       throw new Error(`${item.material.deskripsi}: pilih aktivitas Damkar 330 atau 331`);
     }
-    if (item.material.wajib_kembali && !item.return_condition) throw new Error(`${item.material.deskripsi}: isi kondisi barang lama`);
+    if (item.material.wajib_kembali && !item.return_condition) {
+      throw new Error(`${item.material.deskripsi}: wajib tukar — isi kondisi barang lama`);
+    }
+    if (item.return_enabled && item.return_condition && !NO_PHYSICAL_RETURN.has(item.return_condition)) {
+      const returnQty = numberValue(item.return_qty);
+      if (!(returnQty > 0)) throw new Error(`${item.material.deskripsi}: isi qty barang lama`);
+      if (returnQty > qty) throw new Error(`${item.material.deskripsi}: qty barang lama melebihi qty keluar`);
+    }
     totalByMaterial.set(item.material.id, (totalByMaterial.get(item.material.id) || 0) + qty);
   }
   for (const [materialId, total] of totalByMaterial) {
@@ -483,7 +705,7 @@ const validateDraft = () => {
   if (!state.photos.photo) throw new Error('Foto orang/penerima wajib diambil');
   if (!$('#transactionDate').value) throw new Error('Tanggal transaksi wajib diisi');
   if ($('#transactionDate').value > localDate()) throw new Error('Tanggal transaksi tidak boleh di masa depan');
-  if (!$('#returnPhotoBlock').hidden && !state.photos.return_photo) throw new Error('Foto barang lama wajib diambil');
+  if (physicalReturnPresent() && !state.photos.return_photo) throw new Error('Foto barang lama wajib diambil');
 };
 
 const resetDraft = () => {
@@ -511,9 +733,10 @@ const saveDraft = async () => {
     note: $('#note').value.trim(),
     items: state.items.map((item) => ({
       material_id: item.material.id,
-      qty: Number(String(item.qty).replace(',', '.')),
+      qty: numberValue(item.qty),
       target: { type: item.target.type, code: item.target.code, activity: item.target.activity || '' },
-      return_qty: item.return_qty || '', return_condition: item.return_condition || '',
+      return_qty: item.return_enabled ? (item.return_qty || '') : '',
+      return_condition: item.return_enabled ? (item.return_condition || '') : '',
     })),
     photo_time: state.photos.photo.captured_at,
     photo_2_time: state.photos.photo_2?.captured_at || '',
@@ -525,7 +748,12 @@ const saveDraft = async () => {
     status: 'pending',
     created_at: new Date().toISOString(),
     payload,
-    summary: state.items.map((item, index) => ({ material: item.material.material, description: item.material.deskripsi, qty: payload.items[index].qty, unit: item.material.satuan })),
+    summary: state.items.map((item, index) => ({
+      material: item.material.material, description: item.material.deskripsi,
+      qty: payload.items[index].qty, unit: item.material.satuan,
+      return_qty: payload.items[index].return_qty,
+      return_condition: payload.items[index].return_condition,
+    })),
     photo: state.photos.photo.blob,
     photo_2: state.photos.photo_2?.blob || null,
     return_photo: state.photos.return_photo?.blob || null,
@@ -541,7 +769,8 @@ const saveDraft = async () => {
 
 const statusLabel = (entry) => ({
   pending: 'Menunggu upload', uploading: 'Mengunggah…', error: 'Gagal — coba lagi',
-  duplicate: 'Perlu konfirmasi', sent: `Terkirim · ${entry.server_result?.bon || ''}`,
+  duplicate: 'Perlu konfirmasi',
+  sent: entry.kind === 'return' ? 'Pengembalian terkirim' : `Terkirim · ${entry.server_result?.bon || ''}`,
 }[entry.status] || entry.status);
 
 const renderQueue = async () => {
@@ -556,13 +785,23 @@ const renderQueue = async () => {
     const card = document.createElement('div'); card.className = `queue-card ${entry.status}`;
     const head = document.createElement('div'); head.className = 'queue-head';
     const title = document.createElement('div');
-    const recipient = document.createElement('b'); recipient.textContent = entry.payload.recipient;
+    const recipient = document.createElement('b');
+    recipient.textContent = entry.kind === 'return' ? '↩ Pengembalian barang lama' : entry.payload.recipient;
     const date = document.createElement('small'); date.textContent = `${entry.payload.date} · ${new Date(entry.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`;
     title.append(recipient, date);
     const badge = document.createElement('span'); badge.className = `status-pill ${entry.status === 'sent' ? 'ok' : entry.status === 'duplicate' || entry.status === 'error' ? 'warn' : 'neutral'}`; badge.textContent = statusLabel(entry);
     head.append(title, badge); card.append(head);
     const items = document.createElement('ul'); items.className = 'queue-items';
-    entry.summary.forEach((row) => { const li = document.createElement('li'); li.textContent = `${row.description} · ${row.qty} ${row.unit}`; items.append(li); });
+    entry.summary.forEach((row) => {
+      const li = document.createElement('li');
+      li.textContent = `${row.description} · ${row.qty} ${row.unit}`;
+      if (row.return_condition) {
+        const oldItem = document.createElement('small'); oldItem.className = 'queue-return';
+        oldItem.textContent = `↩ Barang lama: ${row.return_qty || 0} · ${row.return_condition}`;
+        li.append(oldItem);
+      }
+      items.append(li);
+    });
     card.append(items);
     if (entry.error) { const error = document.createElement('p'); error.className = 'notice warn'; error.textContent = entry.error; card.append(error); }
     if (entry.status !== 'sent') {
@@ -589,10 +828,17 @@ const uploadEntry = async (clientUuid, confirmDuplicate = false) => {
   entry.status = 'uploading'; entry.error = ''; await putQueue(entry); await renderQueue();
   try {
     if (confirmDuplicate) entry.payload.confirm_duplicate = true;
-    const result = await uploadTransaction(entry);
+    const result = entry.kind === 'return' ? await uploadReturn(entry) : await uploadTransaction(entry);
     entry.status = 'sent'; entry.server_result = result; entry.error = '';
     entry.photo = null; entry.photo_2 = null; entry.return_photo = null;
-    await putQueue(entry); toast(`${result.bon} diterima server`);
+    if (entry.kind === 'return' && state.bootstrap?.pending_returns) {
+      state.bootstrap.pending_returns = state.bootstrap.pending_returns.filter(
+        (row) => row.transaction_id !== entry.transaction_id,
+      );
+      await setCache('bootstrap', state.bootstrap);
+    }
+    await putQueue(entry);
+    toast(entry.kind === 'return' ? 'Pengembalian diterima server' : `${result.bon} diterima server`);
   } catch (error) {
     entry.status = error.body?.duplicate ? 'duplicate' : 'error';
     entry.error = error.message; entry.matches = error.body?.matches || [];
@@ -680,6 +926,16 @@ const bindEvents = () => {
   $('#targetDialog').addEventListener('cancel', (event) => {
     event.preventDefault(); closeTargetDialog();
   });
+  RETURN_CONDITIONS.forEach((value) => $('#laterReturnCondition').add(new Option(value, value)));
+  $('#laterReturnCondition').addEventListener('change', renderLaterReturnPhotoRule);
+  $('#returnDialogClose').addEventListener('click', closeReturnDialog);
+  $('#returnDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); closeReturnDialog();
+  });
+  $('#returnForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try { await saveLaterReturnDraft(); } catch (error) { showDialog('Periksa pengembalian', error.message); }
+  });
   $('#transactionForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     try { await saveDraft(); } catch (error) { showDialog('Periksa transaksi', error.message); }
@@ -702,6 +958,7 @@ const bindEvents = () => {
   bindPhoto('#photoCamera', '#photoGallery', '#photoPreview', 'photo');
   bindPhoto('#photo2Camera', '#photo2Gallery', '#photo2Preview', 'photo_2');
   bindPhoto('#returnPhotoCamera', '#returnPhotoGallery', '#returnPhotoPreview', 'return_photo');
+  bindLaterReturnPhoto();
   App.addListener('backButton', () => {
     const active = $('.screen.active')?.id;
     if (active && active !== 'screenHome') go('home'); else App.exitApp();

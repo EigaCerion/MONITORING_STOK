@@ -1,6 +1,6 @@
 # Aplikasi Android Monitoring Stok
 
-Versi aktif: **0.1.1 (uji lapangan)**.
+Versi aktif: **0.1.2 (uji lapangan)**.
 
 ## Cakupan versi awal
 
@@ -14,6 +14,14 @@ Versi aktif: **0.1.1 (uji lapangan)**.
 - Upload akhir hari mengirim antrean satu per satu. `client_uuid` memastikan
   retry tidak membuat BON kedua walaupun jawaban server terputus.
 - Transaksi identik pada tanggal yang sama ditahan untuk konfirmasi operator.
+- Pengembalian barang lama dapat dicatat untuk material wajib tukar maupun
+  material biasa. Foto diwajibkan hanya bila barang fisik benar-benar
+  diserahkan; kondisi hilang/pekerja baru tidak memerlukan foto barang lama.
+- Sinkron pagi mengunduh daftar barang wajib tukar yang belum kembali.
+  Pengembalian yang menyusul dapat dicatat offline dari APK dan diunggah
+  idempoten melalui antrean yang sama.
+- Satu material dapat dibagi ke beberapa tujuan dengan tombol **Bagi ke tujuan
+  lain**, dan aplikasi menampilkan total pembagian serta sisa stok.
 - Tujuan BON dicari seperti versi web: kode blok/unit, alias EX ke EXA,
   Kantor/Staff/Workshop, dan AFD. Hanya tujuan dari master Supplementary yang
   dapat dikonfirmasi; AFD tetap meminta operator memilih blok yang benar.
@@ -58,7 +66,10 @@ cd D:\CODE\monitoring_stok\mobile
 powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1 -ModeDebug
 ```
 
-Hasil: `mobile/dist-apk/MonitoringStok-0.1.1-debug.apk`.
+Hasil uji langsung: `mobile/dist-apk/MonitoringStok-0.1.2-debug.apk`. Untuk
+perangkat uji yang sudah memakai tanda tangan debug yang sama, aset GitHub
+Releases disalin dengan nama `MonitoringStok-0.1.2.apk` agar dikenali pemeriksa
+pembaruan aplikasi.
 
 APK produksi membutuhkan keystore khusus dan permanen di luar repositori:
 

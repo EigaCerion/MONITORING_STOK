@@ -48,6 +48,7 @@
       <div id="summaryGrid" class="summary-grid" hidden>
         <button class="summary-card" data-go="input"><span id="materialCount">0</span><small>Material tersedia</small></button>
         <button class="summary-card" data-go="queue"><span id="pendingCount">0</span><small>Menunggu upload</small></button>
+        <button class="summary-card wide" data-go="returns"><span id="pendingReturnCount">0</span><small>Barang lama belum kembali</small></button>
       </div>
 
       <div id="updateCard" class="card update-card" hidden>
@@ -107,11 +108,12 @@
             <img id="photo2Preview" class="photo-preview" alt="Pratinjau foto kedua" hidden>
           </div>
           <div id="returnPhotoBlock" class="photo-block" hidden>
-            <b>Foto barang lama yang dikembalikan <span class="required">*</span></b>
+            <b>Foto barang lama yang dikembalikan <span id="returnPhotoRequired" class="required" hidden>*</span></b>
             <div class="photo-actions">
               <label class="btn primary">Ambil foto<input id="returnPhotoCamera" type="file" accept="image/*" capture="environment" hidden></label>
               <label class="btn">Pilih galeri<input id="returnPhotoGallery" type="file" accept="image/*" hidden></label>
             </div>
+            <p id="returnPhotoHint" class="hint">Wajib bila barang lama benar-benar diserahkan.</p>
             <img id="returnPhotoPreview" class="photo-preview" alt="Pratinjau barang lama" hidden>
           </div>
         </div>
@@ -128,6 +130,13 @@
       </div>
       <div id="queueList" class="queue-list"></div>
       <div id="queueEmpty" class="empty-state"><b>Antrean kosong</b><p>Semua transaksi sudah diterima server.</p></div>
+    </section>
+
+    <section id="screenReturns" class="screen" aria-labelledby="returnsTitle">
+      <div class="screen-title"><div><small>PENGEMBALIAN MENYUSUL</small><h1 id="returnsTitle">Barang lama belum kembali</h1></div><span id="returnsBadge" class="status-pill warn">0 barang</span></div>
+      <div class="notice warn">Daftar ini berasal dari sinkron pagi. Catatan dapat dibuat tanpa sinyal dan akan masuk ke antrean Upload.</div>
+      <div id="pendingReturnList" class="queue-list"></div>
+      <div id="returnsEmpty" class="empty-state"><b>Tidak ada pengembalian tertunda</b><p>Semua barang wajib tukar sudah memiliki catatan pengembalian.</p></div>
     </section>
 
     <section id="screenSettings" class="screen" aria-labelledby="settingsTitle">
@@ -165,6 +174,31 @@
              placeholder="Ketik Kantor, G17R, DT32, EX17, atau AFD 3">
       <div id="targetDialogResults" class="picker target-picker" hidden></div>
       <p class="hint">Ketik kode atau nama. Hasil yang cocok akan muncul di atas.</p>
+    </div>
+  </dialog>
+  <dialog id="returnDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>PENGEMBALIAN BARANG</small><h2 id="returnDialogTitle">Catat barang lama</h2></div><button id="returnDialogClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <p id="returnDialogInfo" class="muted"></p>
+      <form id="returnForm">
+        <div class="form-grid">
+          <label>Qty barang lama<input id="laterReturnQty" inputmode="decimal"></label>
+          <label>Kondisi<select id="laterReturnCondition" required><option value="">— pilih kondisi —</option></select></label>
+        </div>
+        <label>Dikembalikan oleh<input id="laterReturnedBy" autocomplete="off"></label>
+        <label>Tanggal kembali<input id="laterReturnDate" type="date" required></label>
+        <label>Keterangan<input id="laterReturnNote" autocomplete="off" placeholder="opsional"></label>
+        <div id="laterReturnPhotoBlock" class="photo-block">
+          <b>Foto barang lama <span id="laterReturnPhotoRequired" class="required">*</span></b>
+          <div class="photo-actions">
+            <label class="btn primary">Ambil foto<input id="laterReturnPhotoCamera" type="file" accept="image/*" capture="environment" hidden></label>
+            <label class="btn">Pilih galeri<input id="laterReturnPhotoGallery" type="file" accept="image/*" hidden></label>
+          </div>
+          <p id="laterReturnPhotoHint" class="hint">Wajib bila barang fisik diserahkan.</p>
+          <img id="laterReturnPhotoPreview" class="photo-preview" alt="Pratinjau barang lama" hidden>
+        </div>
+        <button class="btn primary block" type="submit">Simpan ke antrean HP</button>
+      </form>
     </div>
   </dialog>
   <dialog id="messageDialog">

@@ -1937,3 +1937,101 @@ def test_api_mobile_menolak_material_dikunci_dan_tanpa_foto(client):
     }, content_type="multipart/form-data")
     assert locked.status_code == 409 and "Gunakan kode pengganti" in locked.get_json()["error"]
     assert not q(client, "SELECT * FROM mobile_submissions")
+
+
+def test_api_mobile_pengembalian_barang_lama_fisik_dan_tanpa_barang(client):
+    """APK menyimpan tukar barang, mewajibkan foto fisik, dan menerima alasan tanpa barang."""
+    upload_master(client, master_rows())
+    egrek = q(client, "SELECT id FROM materials WHERE material='906.002.003'")[0]["id"]
+    import sqlite3
+    db = sqlite3.connect(client.app.config["DATABASE"])
+    db.execute("UPDATE materials SET wajib_kembali=1 WHERE id=?", (egrek,))
+    db.commit()
+    db.close()
+    headers = mobile_login(client)
+
+    base = {
+        "client_uuid": str(uuid.uuid4()), "type": "keluar", "date": HARI_INI.isoformat(),
+        "recipient": "Pemanen APK", "target": {"type": "blok", "code": "D24"},
+        "items": [{"material_id": egrek, "qty": 2}],
+    }
+    missing = client.post("/api/mobile/v1/transactions", headers=headers, data={
+        "payload": json.dumps(base), "photo": jpeg_file("orang.jpg"),
+    }, content_type="multipart/form-data")
+    assert missing.status_code == 400 and "wajib tukar" in missing.get_json()["error"]
+
+    physical = {**base, "client_uuid": str(uuid.uuid4()), "items": [{
+        "material_id": egrek, "qty": 2, "return_qty": 2, "return_condition": "Rusak",
+    }]}
+    no_old_photo = client.post("/api/mobile/v1/transactions", headers=headers, data={
+        "payload": json.dumps(physical), "photo": jpeg_file("orang-2.jpg"),
+    }, content_type="multipart/form-data")
+    assert no_old_photo.status_code == 400 and "Foto barang lama wajib" in no_old_photo.get_json()["error"]
+
+    saved = client.post("/api/mobile/v1/transactions", headers=headers, data={
+        "payload": json.dumps(physical), "photo": jpeg_file("orang-3.jpg"),
+        "return_photo": jpeg_file("egrek-lama.jpg"),
+    }, content_type="multipart/form-data")
+    assert saved.status_code == 200
+    old_item = q(client, "SELECT * FROM pengembalian WHERE batal=0")[0]
+    assert old_item["qty"] == 2 and old_item["kondisi"] == "Rusak" and old_item["foto"]
+    assert stok(client, "906.002.003") == 6
+
+    no_item = {
+        **base, "client_uuid": str(uuid.uuid4()), "recipient": "Pekerja Baru APK",
+        "target": {"type": "blok", "code": "D25"},
+        "items": [{"material_id": egrek, "qty": 1, "return_qty": "",
+                   "return_condition": "Tidak ada — pekerja baru / tambahan"}],
+    }
+    saved_without_old_photo = client.post("/api/mobile/v1/transactions", headers=headers, data={
+        "payload": json.dumps(no_item), "photo": jpeg_file("pekerja-baru.jpg"),
+    }, content_type="multipart/form-data")
+    assert saved_without_old_photo.status_code == 200
+    assert len(q(client, "SELECT * FROM pengembalian WHERE batal=0")) == 2
+    assert stok(client, "906.002.003") == 5
+
+
+def test_api_mobile_sinkron_dan_upload_pengembalian_menyusul_idempoten(client):
+    """Sinkron APK memuat tunggakan dan retry upload pengembalian tidak menggandakan catatan."""
+    upload_master(client, master_rows(qty_racun=10))
+    racun = q(client, "SELECT id FROM materials WHERE material='904.001.002' AND special_stock='' ")[0]["id"]
+    html = post(client, "/input", {
+        "tombol": "keluar", "material_id": [racun], "qty": ["1"],
+        "penerima": "Bobi", "foto": jpeg_file("bobi.jpg"),
+    }, follow_redirects=True).data.decode()
+    assert "tersimpan" in html
+    transaction = q(client, "SELECT * FROM transactions WHERE material_id=? AND batal=0", (racun,))[0]
+
+    import sqlite3
+    db = sqlite3.connect(client.app.config["DATABASE"])
+    db.execute("UPDATE materials SET wajib_kembali=1 WHERE id=?", (racun,))
+    db.commit()
+    db.close()
+    headers = mobile_login(client)
+    bootstrap = client.get("/api/mobile/v1/bootstrap", headers=headers).get_json()
+    assert bootstrap["pending_returns"][0]["transaction_id"] == transaction["id"]
+
+    payload = {
+        "client_uuid": str(uuid.uuid4()), "date": HARI_INI.isoformat(),
+        "qty": 1, "condition": "Tabung / wadah kosong", "returned_by": "Bobi",
+        "note": "diterima lewat APK",
+    }
+    missing_photo = client.post(f"/api/mobile/v1/returns/{transaction['id']}", headers=headers, data={
+        "payload": json.dumps(payload),
+    }, content_type="multipart/form-data")
+    assert missing_photo.status_code == 400 and "Foto barang lama wajib" in missing_photo.get_json()["error"]
+
+    saved = client.post(f"/api/mobile/v1/returns/{transaction['id']}", headers=headers, data={
+        "payload": json.dumps(payload), "photo": jpeg_file("wadah-kosong.jpg"),
+    }, content_type="multipart/form-data")
+    assert saved.status_code == 200 and saved.get_json()["already_received"] is False
+    return_id = saved.get_json()["return_id"]
+    retry = client.post(f"/api/mobile/v1/returns/{transaction['id']}", headers=headers, data={
+        "payload": json.dumps(payload), "photo": jpeg_file("retry.jpg"),
+    }, content_type="multipart/form-data")
+    assert retry.status_code == 200 and retry.get_json()["already_received"] is True
+    assert retry.get_json()["return_id"] == return_id
+    assert len(q(client, "SELECT * FROM pengembalian WHERE transaksi_id=? AND batal=0", (transaction["id"],))) == 1
+    assert len(q(client, "SELECT * FROM mobile_return_submissions")) == 1
+    refreshed = client.get("/api/mobile/v1/bootstrap", headers=headers).get_json()
+    assert refreshed["pending_returns"] == []
