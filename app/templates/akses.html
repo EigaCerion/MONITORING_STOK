@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Akses dari HP{% endblock %}
+{% block content %}
+<style>.qr svg { width: 100%; height: auto; display: block; }</style>
+<div class="page-head">
+  <div><h1>Akses dari HP Anggota</h1>
+    <p class="muted">Laptop ini menjadi server. Anggota membuka alamat di bawah dari browser HP, lalu login dengan akun masing-masing (<a href="{{ url_for('admin.pengguna') }}">Pengaturan → Pengguna</a>).</p></div>
+  <a class="btn" href="{{ url_for('admin.akses') }}">↻ Muat ulang alamat</a>
+</div>
+
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
+  {% for a in alamat %}
+  <div class="card" style="text-align:center">
+    <span class="badge {{ 'b-masuk' if a.jenis == 'Hotspot laptop' else '' }}">{{ a.jenis }}</span>
+    <div class="qr" style="background:#fff;border-radius:8px;padding:8px;margin:.6rem auto;max-width:220px">{{ a.qr|safe }}</div>
+    <div style="font-size:1.15rem;font-weight:700;word-break:break-all"><a href="{{ a.url }}">{{ a.url }}</a></div>
+    <p class="hint">{{ a.catatan }}</p>
+  </div>
+  {% else %}
+  <div class="card">Laptop belum tersambung ke jaringan mana pun.</div>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Aplikasi Android offline</h2>
+  <p>APK memakai alamat Tailscale yang sama, tetapi transaksi dan foto dapat disimpan dahulu ketika sinyal putus.</p>
+  <a class="btn primary" href="{{ url_for('admin.aplikasi_mobile') }}">Kelola Aplikasi Mobile</a>
+</div>
+
+<div class="card">
+  <h2>Langkah untuk anggota</h2>
+  <ol style="margin:.2rem 0 0;padding-left:1.2rem">
+    <li>Sambungkan HP ke <b>WiFi yang sama</b> dengan laptop ini{% if wifi %} (<b>{{ wifi }}</b>){% endif %}.</li>
+    <li>Scan QR <b>WiFi / LAN</b> di atas dengan kamera HP, atau ketik alamatnya di Chrome.</li>
+    <li>Login dengan username & password masing-masing. Supaya cepat, pilih menu Chrome ⋮ → <b>Tambahkan ke layar utama</b>.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>Kalau HP tidak bisa membuka (loading lama / ERR_CONNECTION_TIMED_OUT)</h2>
+  <p style="margin-top:0">WiFi kantor seperti <b>{{ wifi or 'KPNCORP' }}</b> biasanya <b>memisahkan antar perangkat</b> (client isolation), jadi HP tidak bisa menjangkau laptop walau WiFi-nya sama. Ini diatur oleh IT, bukan oleh aplikasi. Solusinya, pakai <b>hotspot dari laptop</b>:</p>
+  <ol style="padding-left:1.2rem">
+    <li>Di laptop: <b>Settings → Network &amp; Internet → Mobile hotspot</b> → nyalakan. Catat nama & password hotspot (bisa diubah di tombol Edit).</li>
+    <li>HP anggota tersambung ke hotspot laptop tersebut.</li>
+    <li>Tekan <b>↻ Muat ulang alamat</b> di halaman ini. Akan muncul kartu <b>Hotspot laptop</b> (biasanya <code>http://192.168.137.1:{{ port }}</code>). Bagikan QR-nya ke anggota.</li>
+  </ol>
+  <p class="hint">Catatan: hotspot Windows maksimal 8 perangkat dan laptop harus tetap menyala. Jika <b>GlobalProtect</b> sedang tersambung dan HP tetap tidak bisa masuk, putuskan GlobalProtect sementara. Untuk pemakaian permanen, minta IT membuka akses antar perangkat untuk laptop ini atau pasang router WiFi kecil khusus gudang.</p>
+</div>
+{% endblock %}

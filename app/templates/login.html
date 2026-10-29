@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Masuk{% endblock %}
+{% block content %}
+<div class="login">
+  <div class="login-logo">{{ ikon('stok', 34) }}</div>
+  <div class="card">
+    <h1 style="text-align:center">Monitoring Stok</h1>
+    <p class="muted" style="margin-top:0;text-align:center">Masuk untuk melanjutkan</p>
+    <form method="post">
+      <div class="field"><label for="u">Username</label>
+        <input id="u" name="username" autocomplete="username" autocapitalize="none" required autofocus></div>
+      <div class="field"><label for="p">Password</label>
+        <input id="p" name="password" type="password" autocomplete="current-password" required></div>
+      <button class="btn primary block" style="min-height:48px">Masuk</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

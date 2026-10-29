@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Input Transaksi{% endblock %}
+
+{% macro baris_item(it) -%}
+<div class="item-row" data-id="{{ it.id if it else '' }}" data-stok="{{ it.stok if it else '' }}" data-satuan="{{ it.satuan if it else '' }}" data-wajib="{{ 1 if it and it.wajib_kembali else 0 }}"
+  data-plant="{{ it.plant if it else '' }}"
+  data-expired="{{ 1 if it and (it.expired or (it.expired_at and it.expired_at <= hari_ini)) else 0 }}"
+  data-input-locked="{{ 1 if it and it.input_locked else 0 }}"
+  data-alokasi-unit="{{ 1 if it and it.alokasi_unit_workshop else 0 }}">
+  <input type="hidden" name="material_id" value="{{ it.id if it else '' }}">
+  <input type="hidden" name="item_tujuan_tipe" value="{{ it.tujuan_tipe if it else '' }}">
+  <input type="hidden" name="item_tujuan_kode" value="{{ it.tujuan_kode if it else '' }}">
+  <input type="hidden" name="item_aktivitas_kode" value="{{ it.aktivitas_kode if it else '' }}">
+  <div class="item-info">
+    <b class="nm">{{ it.deskripsi if it }}</b>
+    <small class="cd">{{ (it.material ~ (' · Sp ' ~ it.special_stock if it.special_stock else '')) if it }}</small>
+    <small class="st">{{ ('stok ' ~ (it.stok|angka) ~ ' ' ~ it.satuan) if it }}</small>
+    {% if it and (it.expired or (it.expired_at and it.expired_at <= hari_ini)) %}<small class="minus expired-label">{{ ikon('peringatan', 14) }}<b>EXPIRED — tidak dapat diinput</b></small>{% endif %}
+    {% if it and it.input_locked %}<small class="minus locked-label">{{ ikon('peringatan', 14) }}<b>DIKUNCI — {{ it.input_lock_reason or 'gunakan kode material pengganti yang benar' }}</b></small>{% endif %}
+  </div>
+  <div class="item-qty">
+    <input name="qty" inputmode="decimal" autocomplete="off" placeholder="qty" aria-label="Qty" value="{{ it.qty_raw if it }}">
+    <span class="sat">{{ it.satuan if it }}</span>
+  </div>
+  <button type="button" class="item-del" aria-label="Hapus barang">{{ ikon('hapus', 20) }}<span class="sr-only">Hapus barang</span></button>
+  <div class="item-hint hint"></div>
+  <div class="item-tujuan" data-show="keluar">
+    <button type="button" class="linkbtn item-tujuan-ubah"><span>Tujuan BON:</span> <b class="item-tujuan-label">{{ it.tujuan_label if it and it.tujuan_label else 'Ikuti tujuan utama' }}</b></button>
+    <button type="button" class="linkbtn item-bagi">+ Bagi ke tujuan lain</button>
+  </div>
+  <div class="item-kembali" data-kembali {{ '' if it and (it.wajib_kembali or it.kembali_kondisi) else 'hidden' }}>
+    <span class="lbl">{{ ikon('pengembalian', 16) }} Barang lama <b class="wajib-tag">wajib</b></span>
+    <input name="kembali_qty" inputmode="decimal" autocomplete="off" placeholder="qty" aria-label="Qty barang lama" value="{{ it.kembali_qty if it }}">
+    <select name="kembali_kondisi" aria-label="Kondisi barang lama"><option value="">kondisi…</option>
+      {% for k in kondisi %}<option {{ 'selected' if it and it.kembali_kondisi == k }}>{{ k }}</option>{% endfor %}</select>
+  </div>
+  <button type="button" class="linkbtn item-tambah-kembali" {{ 'hidden' if it and (it.wajib_kembali or it.kembali_kondisi) else '' }}>{{ ikon('tambah', 16) }} ada barang lama dikembalikan</button>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="hp">
+  <form method="post" enctype="multipart/form-data" id="formInput" class="card form-input" novalidate
+        {% if user.role == 'admin' %}data-tambah-url="{{ url_for('admin.material_baru') }}"{% endif %}>
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="duplikat_token" id="duplikatToken" value="">
+
+    <div class="seg seg-jenis" role="radiogroup" aria-label="Jenis transaksi">
+      {% for val, lbl in [('keluar','Keluar'),('transfer','Transfer'),('masuk','Masuk')] %}
+        <input type="radio" name="tombol" id="tb_{{ val }}" value="{{ val }}" {{ 'checked' if tombol == val }}>
+        <label for="tb_{{ val }}" class="seg-{{ val }}">{{ ikon(val, 20) }}<span>{{ lbl }}</span></label>
+      {% endfor %}
+    </div>
+
+    <div data-show="transfer" class="l-transfer" hidden>
+      <div class="seg two" role="radiogroup" aria-label="Arah transfer">
+        <input type="radio" name="arah" id="ar_kirim" value="kirim" {{ 'checked' if f.get('arah','kirim') != 'terima' }}>
+        <label for="ar_kirim">Kirim ke kebun lain</label>
+        <input type="radio" name="arah" id="ar_terima" value="terima" {{ 'checked' if f.get('arah') == 'terima' }}>
+        <label for="ar_terima">Terima dari kebun lain</label>
+      </div>
+      <div class="field">
+        <label class="req" for="kebun" id="lblKebun">Kebun Tujuan</label>
+        <select name="kebun" id="kebun">
+          <option value="">— pilih kebun —</option>
+          {% for k in kebun %}
+            {% if not (user.kebun_kode and k.kode == user.kebun_kode) %}
+            <option value="{{ k.kode }}" {{ 'selected' if f.get('kebun') == k.kode }}>{{ k.nama }} ({{ k.kode }})</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        {% if kebun|length < 2 %}<div class="hint">Daftar kebun masih kosong — minta admin menambah di menu Kebun.</div>{% endif %}
+      </div>
+    </div>
+
+    <section class="langkah l-barang">
+      <div class="langkah-judul"><span class="no">1</span> Barang <span class="muted">(<span id="itemCount">{{ items|length }}</span>)</span></div>
+      <div id="itemList">{% for it in items %}{{ baris_item(it) }}{% endfor %}</div>
+      <div class="cari-box">
+        {{ ikon('cari', 18) }}
+        <input id="cari" type="search" placeholder="Cari & tambah barang (kode / nama)…" autocomplete="off" enterkeyhint="search">
+      </div>
+      <ul class="picker-list" id="pickList" hidden></ul>
+      <p class="hint" id="itemKosong" {{ 'hidden' if items }}>Ketik nama/kode barang lalu tap hasilnya. Satu bon bisa berisi banyak barang.</p>
+      <template id="itemTpl">{{ baris_item(none) }}</template>
+    </section>
+
+    <section class="langkah l-detail">
+      <div class="langkah-judul"><span class="no">2</span> Detail bon</div>
+      <div class="alokasi-box tujuan-bon-card" data-show="keluar">
+        <div class="tujuan-bon-head">
+          <span class="tujuan-bon-icon">{{ ikon('kebun', 24) }}</span>
+          <div><b>Tujuan BON <span class="req-mark">*</span></b><small>Berlaku untuk semua barang dalam BON ini</small></div>
+        </div>
+        <div class="field">
+          <label for="tujuan_bon_input">Ketik tujuan</label>
+          <div class="cari-box tujuan-bon-search">
+            {{ ikon('cari', 18) }}
+            <input id="tujuan_bon_input" name="tujuan_bon_input" type="search"
+                   value="{{ f.get('tujuan_bon_input') or f.get('tujuan_kode','') }}"
+                   placeholder="mis. Kantor, G17R, DT32, EX17…" autocomplete="off"
+                   autocapitalize="characters" enterkeyhint="search">
+          </div>
+          <ul class="picker-list" id="tujuanPickList" hidden></ul>
+          <input type="hidden" id="tujuan_tipe" name="tujuan_tipe" value="{{ f.get('tujuan_tipe','') }}">
+          <input type="hidden" id="tujuan_kode" name="tujuan_kode" value="{{ f.get('tujuan_kode','') }}">
+          <div id="tujuanBonKonfirmasi" class="tujuan-konfirmasi" hidden>
+            {{ ikon('centang', 18) }}
+            <div><b id="tujuanBonHasil"></b><small id="tujuanBonDetail"></small></div>
+          </div>
+        </div>
+        <div class="field" id="aktivitasDamkarBox" hidden>
+          <label class="req" for="aktivitas_kode">Aktivitas Damkar</label>
+          <select id="aktivitas_kode" name="aktivitas_kode">
+            <option value="">— pilih aktivitas —</option>
+            <option value="330" {{ 'selected' if f.get('aktivitas_kode') == '330' }}>330 — Fire Patrol / patroli kebakaran</option>
+            <option value="331" {{ 'selected' if f.get('aktivitas_kode') == '331' }}>331 — Fire Fighter Control / pengendalian kebakaran</option>
+          </select>
+        </div>
+        <div class="hint" id="tujuanHint">Jika satu barang menuju tempat lain, gunakan “Bagi ke tujuan lain” pada barang tersebut.</div>
+      </div>
+      <div class="field" data-show="keluar kirim">
+        <label class="req" for="penerima" id="lblPenerima">Nama Penerima</label>
+        <input id="penerima" name="penerima" value="{{ f.get('penerima','') }}" list="saranPenerima" autocomplete="off" autocapitalize="words">
+        <datalist id="saranPenerima">{% for s in saran_penerima %}<option value="{{ s }}">{% endfor %}</datalist>
+      </div>
+      <div class="field" data-show="transfer masuk">
+        <label for="nomor_dokumen" id="lblDok">Nomor Dokumen</label>
+        <input id="nomor_dokumen" name="nomor_dokumen" value="{{ f.get('nomor_dokumen','') }}" placeholder="No. surat jalan / DO">
+      </div>
+      <div class="field">
+        <label for="keterangan">Keterangan</label>
+        <input id="keterangan" name="keterangan" value="{{ f.get('keterangan','') }}" list="saranKet" autocomplete="off" placeholder="opsional, mis. Afd 3">
+        <datalist id="saranKet">{% for s in saran_ket %}<option value="{{ s }}">{% endfor %}</datalist>
+      </div>
+      <div class="field field-inline">
+        <label for="tanggal">Tanggal</label>
+        <input type="date" id="tanggal" name="tanggal" value="{{ f.get('tanggal') or hari_ini }}" max="{{ hari_ini }}">
+      </div>
+    </section>
+
+    <section class="langkah l-foto">
+      <div class="langkah-judul"><span class="no">3</span> Foto</div>
+      <div class="hint section-hint">Ambil foto langsung dari kamera atau pilih gambar yang sudah ada di galeri. Foto tetap dikompres dan diberi watermark waktu.</div>
+      <div class="field" id="fotoBox">
+        <label for="foto" id="lblFoto">Foto 1 — Orang / penerima</label>
+        <input type="file" id="foto" name="foto" accept="image/*" data-compress
+          data-kamera="Ambil foto orang" data-tombol="Pilih dari galeri">
+        <img id="fotoPrev" class="foto-prev" alt="" hidden>
+      </div>
+      <div class="field" id="foto2Box">
+        <label for="foto_2">Foto 2 — Bon / dokumen (opsional)</label>
+        <input type="file" id="foto_2" name="foto_2" accept="image/*" data-compress
+          data-kamera="Foto bon sekarang" data-tombol="Pilih dari galeri">
+        <div class="hint">Opsional. Gunakan agar wajah penerima dan tulisan pada bon sama-sama terlihat jelas.</div>
+        <img class="foto-prev" alt="" hidden>
+      </div>
+      <div class="field" id="fotoKembaliBox" hidden>
+        <label for="foto_kembali" id="lblFotoKembali">Foto barang lama yang dikembalikan</label>
+        <input type="file" id="foto_kembali" name="foto_kembali" accept="image/*" data-compress
+          data-kamera="Foto barang lama" data-tombol="Pilih dari galeri">
+        <div class="hint">Wajib bila ada barang lama yang diserahkan; tidak perlu untuk "Hilang" / "Tidak ada — pekerja baru".</div>
+        <img class="foto-prev" alt="" hidden>
+      </div>
+    </section>
+
+    <div class="savebar">
+      <button class="btn primary block" id="btnSimpan">{{ ikon('simpan', 20) }}<span>Simpan</span></button>
+    </div>
+  </form>
+</div>
+
+<dialog id="dlgDuplikat">
+  <form method="dialog">
+    <div class="dlg-head"><div><h2 class="m-0">Kemungkinan double input</h2>
+      <small>Transaksi berikut sudah tercatat dengan tanggal, barang, qty, dan penerima yang sama.</small></div>
+      <button class="close" value="cancel" aria-label="Tutup">{{ ikon('tutup', 22) }}</button></div>
+    <div id="duplikatList" class="duplikat-list"></div>
+    <p class="hint">Periksa foto/bon sebelumnya. Pilih “Tetap simpan” hanya jika ini memang pengambilan barang yang berbeda.</p>
+    <div class="actions">
+      <button class="btn" value="cancel">Kembali periksa</button>
+      <button class="btn danger" type="button" id="btnTetapSimpan">Tetap simpan transaksi ini</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgTujuanItem">
+  <form method="dialog">
+    <div class="dlg-head"><div><h2 class="m-0">Tujuan barang</h2>
+      <small data-item-nama>Pilih blok, unit, atau GOH khusus untuk baris ini.</small></div>
+      <button class="close" value="cancel" aria-label="Tutup">{{ ikon('tutup', 22) }}</button></div>
+    <div class="cari-box">
+      {{ ikon('cari', 18) }}
+      <input id="cariTujuanItem" type="search" placeholder="Cari D24, B-034, DT05, GOH Staff…" autocomplete="off">
+    </div>
+    <ul class="picker-list" id="pickTujuanItem" hidden></ul>
+    <p class="hint">Gunakan pembagian bila satu bon berisi beberapa blok. Kode SAP ditampilkan pada hasil pencarian.</p>
+    <div class="actions justify-end">
+      <button type="button" class="btn" id="btnTujuanUmum">Gunakan Tujuan BON</button>
+      <button class="btn" value="cancel">Tutup</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}<script>initInputForm();</script>{% endblock %}

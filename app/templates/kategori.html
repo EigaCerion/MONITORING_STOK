@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Kategori{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Kategori Material</h1>
+  <p class="muted">Kategori diisi manual (racun, beras, alat panen, TK panen, ATK, BBM, oli, dll). Atur kategori per material di menu Master SAP.</p></div></div>
+<div class="card">
+  <form method="post" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="aksi" value="tambah">
+    <div class="field"><label class="req">Nama kategori baru</label><input name="nama" required></div>
+    <div class="field"><button class="btn primary">Tambah</button></div>
+  </form>
+</div>
+<div class="tbl-wrap">
+<table class="tbl">
+  <thead><tr><th>Urutan</th><th>Nama</th><th class="num">Material</th><th></th></tr></thead>
+  <tbody>
+  {% for k in rows %}
+    <tr>
+        <td><form method="post" id="fk{{ loop.index }}"><input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ k.id }}"></form><input form="fk{{ loop.index }}" class="inline" name="urutan" value="{{ k.urutan }}" inputmode="numeric" style="width:60px"></td>
+        <td><input form="fk{{ loop.index }}" name="nama" value="{{ k.nama }}" required></td>
+        <td class="num"><a href="{{ url_for('main.stok', kategori=k.id) }}">{{ k.material }}</a></td>
+        <td class="nowrap"><button form="fk{{ loop.index }}" class="btn sm" name="aksi" value="ubah">Simpan</button>
+          {% if not k.material %}<button form="fk{{ loop.index }}" class="btn sm" name="aksi" value="hapus" data-confirm="Hapus kategori {{ k.nama }}?">Hapus</button>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Pengembalian Barang Lama{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Pengembalian Barang Lama</h1>
+    <p class="muted">Bukti tukar barang: barang lama (egrek, tabung gas, sepatu, dll.) yang dikembalikan saat mengambil yang baru. Tidak mengubah stok.
+      {{ wajib }} material ditandai <b>wajib tukar</b>{% if user.role == 'admin' %} — atur di <a href="{{ url_for('admin.master') }}">Master SAP</a> (kolom Tukar){% endif %}.</p></div>
+  <a class="btn" href="{{ url_for('main.export_kembali', **request.args) }}">Export Excel</a>
+</div>
+
+<div class="card">
+  <h2>Belum mengembalikan barang lama ({{ belum|length }})</h2>
+  <p class="hint mt-0">Pengeluaran barang wajib tukar yang belum ada catatan pengembaliannya. Klik <b>Catat</b> saat barang lama diterima.</p>
+  <div class="tbl-wrap">
+  <table class="tbl tbl-cards">
+    <thead><tr><th>Tanggal</th><th>Bon</th><th>Material</th><th class="num">Qty keluar</th><th>Penerima</th><th>Keterangan</th><th></th></tr></thead>
+    <tbody>
+    {% for t in belum %}
+      <tr>
+        <td class="nowrap" data-label="Tanggal">{{ t.tanggal|tgl }}</td>
+        <td data-label="Bon"><small>{% if t.bon %}<a href="{{ url_for('main.transaksi', bon=t.bon) }}">{{ t.bon }}</a>{% else %}#{{ t.id }}{% endif %}</small></td>
+        <td class="desc"><a href="{{ url_for('main.kartu_stok', mid=t.material_id) }}">{{ t.deskripsi }}</a><br><small>{{ t.material }}</small></td>
+        <td class="num" data-label="Keluar">{{ t.qty|angka }} {{ t.satuan }}</td>
+        <td data-label="Penerima">{{ t.penerima or '' }}</td>
+        <td><small>{{ t.keterangan or '' }}</small></td>
+        <td class="nowrap c-aksi">{% if user.role in ('admin','petugas') %}{{ ui.tombol_kembali(t) }}{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="7" class="muted">Semua barang wajib tukar sudah ada catatan pengembaliannya. 👍</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Riwayat pengembalian</h2>
+  <form class="filters" method="get" data-filter>
+    <div class="grow"><label>Cari</label><input type="search" name="q" value="{{ request.args.q or '' }}" placeholder="material / nama / bon"></div>
+    <div><label>Dari</label><input type="date" name="dari" value="{{ request.args.dari or '' }}"></div>
+    <div><label>Sampai</label><input type="date" name="sampai" value="{{ request.args.sampai or '' }}"></div>
+    <div><label>Kondisi</label><select name="kondisi"><option value="">Semua</option>
+      {% for k in kondisi %}<option {{ 'selected' if request.args.kondisi == k }}>{{ k }}</option>{% endfor %}</select></div>
+    <button class="btn primary">Tampilkan</button>
+  </form>
+  <div class="tbl-wrap">
+  <table class="tbl tbl-cards">
+    <thead><tr><th>Tgl kembali</th><th>Bon</th><th>Material</th><th class="num">Baru keluar</th><th class="num">Lama kembali</th><th>Kondisi</th>
+      <th>Dikembalikan oleh</th><th>Keterangan</th><th>Foto</th><th></th></tr></thead>
+    <tbody>
+    {% for p in rows %}
+      <tr>
+        <td class="nowrap" data-label="Kembali">{{ p.tanggal|tgl }}</td>
+        <td><small>{% if p.bon %}<a href="{{ url_for('main.transaksi', bon=p.bon) }}">{{ p.bon }}</a>{% else %}#{{ p.transaksi_id }}{% endif %}</small></td>
+        <td class="desc">{{ p.deskripsi }}<br><small>{{ p.material }}</small></td>
+        <td class="num" data-label="Baru keluar">{{ p.qty_keluar|angka }} {{ p.satuan }}</td>
+        <td class="num" data-label="Lama kembali"><b>{{ p.qty|angka }}</b> {{ p.satuan }}</td>
+        <td><span class="badge {{ 'b-keluar' if 'Hilang' in p.kondisi else '' }}">{{ p.kondisi }}</span></td>
+        <td data-label="Oleh">{{ p.dikembalikan_oleh or '' }}</td>
+        <td><small>{{ p.keterangan or '' }}<br>dicatat {{ p.dicatat_oleh }}</small></td>
+        <td>{% if p.foto %}<a class="icon-link" href="{{ url_for('main.foto', nama=p.foto) }}" target="_blank">{{ ikon('kamera', 16) }}<span>barang lama</span></a>{% endif %}
+          {% if p.foto_bon %}<br><a href="{{ url_for('main.foto', nama=p.foto_bon) }}" target="_blank"><small>foto transaksi 1</small></a>{% endif %}
+          {% if p.foto_bon_2 %}<br><a href="{{ url_for('main.foto', nama=p.foto_bon_2) }}" target="_blank"><small>foto transaksi 2</small></a>{% endif %}</td>
+        <td class="c-aksi">{% if user.role == 'admin' %}
+          <form method="post" action="{{ url_for('main.batal_kembali', pid=p.id) }}" data-confirm="Batalkan catatan pengembalian ini?">
+            <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="kembali" value="{{ request.full_path }}">
+            <button class="btn sm">Batal</button></form>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="10" class="muted">Belum ada catatan pengembalian.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{{ ui.dialog_transaksi(request.full_path) }}
+{% endblock %}

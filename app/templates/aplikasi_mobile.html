@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Aplikasi Mobile{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Aplikasi Mobile</h1>
+    <p class="muted">Kelola sumber pembaruan APK dan perangkat yang menyinkronkan transaksi melalui Tailscale.</p>
+  </div>
+</div>
+
+<div class="grid two">
+  <form method="post" class="card">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="save_settings">
+    <h2>{{ ikon('unduh', 20) }} Pembaruan APK</h2>
+    <div class="field">
+      <label for="github_repo">Link repositori GitHub</label>
+      <input id="github_repo" name="github_repo" value="{{ settings.mobile_github_repo }}"
+             placeholder="https://github.com/pemilik/monitoring-stok" autocomplete="off">
+      <div class="hint">Boleh dikosongkan dahulu. APK mencari aset bernama <b>MonitoringStok-x.y.z.apk</b> pada GitHub Releases terbaru.</div>
+    </div>
+    <div class="field">
+      <label for="minimum_version">Versi minimum yang diizinkan</label>
+      <input id="minimum_version" name="minimum_version" value="{{ settings.mobile_min_version }}"
+             inputmode="decimal" placeholder="0.1.0">
+      <div class="hint">Perangkat yang lebih lama akan diberi peringatan wajib memperbarui setelah sinkron.</div>
+    </div>
+    <button class="btn primary" type="submit">{{ ikon('simpan', 18) }} Simpan pengaturan</button>
+  </form>
+
+  <div class="card">
+    <h2>{{ ikon('ponsel', 20) }} Cara distribusi</h2>
+    {% if apk_debug %}
+    <div class="flash warn"><b>APK uji tersedia:</b> {{ apk_debug.name }} ({{ apk_debug.size_mb }} MB). Gunakan hanya untuk uji terbatas; versi produksi harus memakai tanda tangan rilis permanen.</div>
+    <a class="btn block" href="{{ url_for('admin.unduh_apk_uji') }}">{{ ikon('unduh', 18) }} Unduh APK uji</a>
+    {% endif %}
+    <ol class="readable-list">
+      <li>Bangun APK rilis dengan nomor versi baru.</li>
+      <li>Buat GitHub Release dan unggah berkas tanpa mengubah namanya.</li>
+      <li>Masukkan link repositori pada panel ini.</li>
+      <li>APK memeriksa versi saat sinkron pagi dan dari menu Pembaruan.</li>
+    </ol>
+    <p class="hint">Aplikasi hanya mengunduh APK dari repositori GitHub yang Anda masukkan di sini. Pemasangan tetap dikonfirmasi oleh Android.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="page-head">
+    <div><h2>Perangkat terdaftar</h2><p class="muted">Perangkat muncul setelah login pertama dari APK.</p></div>
+  </div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Perangkat</th><th>Pengguna</th><th>Versi</th><th>Sinkron terakhir</th><th>Upload terakhir</th><th>Status</th><th>Aksi</th></tr></thead>
+      <tbody>
+      {% for d in devices %}
+        <tr>
+          <td><b>{{ d.name or 'HP Gudang' }}</b><small class="block muted">{{ d.device_uuid }}</small></td>
+          <td>{{ d.user_name }}<small class="block muted">{{ d.username }}</small></td>
+          <td>{{ d.app_version or '—' }}</td>
+          <td>{{ d.last_sync_at or 'belum' }}<small class="block muted">Terlihat: {{ d.last_seen_at or '—' }}</small></td>
+          <td>{{ d.last_upload_at or 'belum' }}<small class="block muted">{{ d.submissions }} BON diterima</small></td>
+          <td><span class="badge {{ 'b-masuk' if d.active else 'b-batal' }}">{{ 'aktif' if d.active else 'dinonaktifkan' }}</span></td>
+          <td>
+            <form method="post">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="device_id" value="{{ d.id }}">
+              <input type="hidden" name="action" value="{{ 'disable_device' if d.active else 'enable_device' }}">
+              <button class="btn sm {{ 'danger' if d.active }}" type="submit">{{ 'Nonaktifkan' if d.active else 'Aktifkan' }}</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted">Belum ada perangkat APK yang login.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

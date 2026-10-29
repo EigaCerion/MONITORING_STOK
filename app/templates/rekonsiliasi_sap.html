@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% block title %}Rekonsiliasi SAP MB51{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Rekonsiliasi SAP MB51 + MB52</h1>
+    <p class="muted">Cocokkan dokumen SAP, pulihkan transaksi yang belum tercatat, dan pastikan saldo akhir tetap sinkron.</p></div>
+  <a class="btn" href="{{ url_for('main.selisih') }}">Kembali ke Selisih SAP</a>
+</div>
+
+<div class="card">
+  <form method="post" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field grow"><label class="req">Export MB51 (.xlsx)</label>
+      <input type="file" name="mb51" accept=".xlsx,.xlsm" required></div>
+    <div class="field grow"><label class="req">Export MB52 / saldo akhir (.xlsx)</label>
+      <input type="file" name="mb52" accept=".xlsx,.xlsm" multiple required>
+      <small>Boleh pilih beberapa file sekaligus, mis. CM3A dan CM9A.</small></div>
+    <div class="field"><label class="req">Mulai riwayat aplikasi</label>
+      <input type="date" name="mulai_rekonsiliasi" value="{{ mulai or mulai_default }}" required>
+      <small>Data SAP sebelum tanggal ini menjadi saldo awal.</small></div>
+    <div class="field"><label class="req">Data MB52 per</label>
+      <input type="datetime-local" name="sap_per" value="{{ now_local }}" required></div>
+    <label class="check" style="align-self:end"><input type="checkbox" name="same_day_included" value="1">
+      MB52 sudah mencakup semua dokumen MB51 pada tanggal yang sama</label>
+    <div class="field"><button class="btn primary">Periksa & Cocokkan</button></div>
+  </form>
+  <p class="hint">MB51 menentukan riwayat transaksi dan nomor dokumen; MB52 menjadi kontrol saldo akhir.
+    Sistem juga mengenali kode material yang berubah dan satu input aplikasi yang terpecah menjadi beberapa dokumen SAP.
+    Pergerakan transit/transfer (mis. TP07 atau MvT 641/101 berpasangan) wajib ditentukan arahnya oleh operator.
+    Pengecualian hanya untuk rantai plasma lengkap 641 → 101 → 221 yang PO, material, qty, tanggal fisik 641/221,
+    dan blok Supplementary-nya cocok; MvT 101 boleh memiliki tanggal posting lebih lambat.
+    rantai tersebut ditampilkan sebagai satu transaksi untuk dikonfirmasi.
+    Biarkan pilihan tanggal sama kosong bila MB52 diambil sebelum pekerjaan SAP hari itu selesai.
+    Tidak ada data yang diubah sebelum Anda memilih dan mengonfirmasi hasilnya.</p>
+</div>
+
+{% if rows %}
+<div class="stats">
+  <div class="stat"><div class="lbl">Siap diberi nomor SAP</div><div class="val">{{ stats.cocok }}</div></div>
+  <div class="stat"><div class="lbl">Gabungan dokumen SAP</div><div class="val">{{ stats.gabung }}</div></div>
+  <div class="stat"><div class="lbl">Calon transaksi baru</div><div class="val">{{ stats.baru }}</div>
+    <small>{{ stats.baru_aman }} memperkecil residual</small></div>
+  <div class="stat"><div class="lbl">Sudah cocok/ditinjau</div><div class="val">{{ stats.sudah + stats.ditinjau + stats.pasangan }}</div></div>
+  {% if stats.reversal %}<div class="stat"><div class="lbl">Reversal SAP</div><div class="val">{{ stats.reversal }}</div>
+    <small>dampak stok bersih nol</small></div>{% endif %}
+  {% if stats.verifikasi_ulang %}<div class="stat warn"><div class="lbl">Verifikasi ulang transfer</div>
+    <div class="val">{{ stats.verifikasi_ulang }}</div><small>keputusan lama berbeda dari pasangan SAP</small></div>{% endif %}
+  <div class="stat warn"><div class="lbl">Transit tanpa master</div><div class="val">{{ stats.verifikasi }}</div></div>
+  <div class="stat warn"><div class="lbl">Belum dapat dipasangkan</div><div class="val">{{ stats.ambigu + stats.tidak_ada }}</div></div>
+  <div class="stat"><div class="lbl">Baris subtotal/jasa dilewati</div><div class="val">{{ dilewati }}</div></div>
+  {% if diabaikan_awal %}<div class="stat"><div class="lbl">Sebelum aplikasi</div><div class="val">{{ diabaikan_awal }}</div>
+    <small>diabaikan sebagai saldo awal</small></div>{% endif %}
+</div>
+
+<div class="card">
+  <div class="section-title">
+    <div><h2 style="margin-bottom:.15rem">Hasil: {{ nama_file }}</h2>
+      <small class="muted">Kontrol saldo: {{ nama_file52 or 'MB52 tidak diupload' }}{% if sap_per %} · per {{ sap_per }}{% endif %}.
+        Calon transaksi baru tidak dicentang otomatis—pilih hanya bila benar-benar belum pernah dicatat.</small></div>
+    {% if stats.cocok or stats.gabung or stats.baru or stats.verifikasi or stats.verifikasi_ulang %}<button form="formRekon" class="btn primary">Simpan pilihan</button>{% endif %}
+  </div>
+  <form method="post" action="{{ url_for('admin.rekonsiliasi_sap_konfirmasi') }}" id="formRekon"
+        data-confirm="Simpan pasangan dan transaksi baru yang dicentang? Saldo material terkait akan disesuaikan kembali ke MB52.">
+    <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="token" value="{{ token }}">
+  </form>
+  <div class="tbl-wrap" style="margin-top:.75rem">
+  <table class="tbl tbl-cards kartu-rekon">
+    <thead><tr><th></th><th>Baris</th><th>Tanggal</th><th>Dokumen SAP</th><th>MvT / Lokasi</th><th>Material SAP</th>
+      <th class="num">Qty SAP</th><th>Pasangan aplikasi</th><th>Verifikasi arah</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr class="{{ 'wrn' if r.status in ('ambigu','tidak_ada','verifikasi','verifikasi_ulang') or (r.perlu_verifikasi_transfer and r.status in ('cocok','gabung','baru')) }}">
+        <td class="c-cek">{% if r.status == 'cocok' and not r.plant_tujuan_tidak_ada %}<input form="formRekon" type="checkbox" name="matches" value="{{ loop.index0 }}" {{ '' if r.perlu_verifikasi_transfer or r.beda_plant else 'checked' }}
+          aria-label="Pilih pasangan baris {{ r._baris }}">
+          {% elif r.status == 'gabung' and r.group_lead %}<input form="formRekon" type="checkbox" name="matches" value="{{ loop.index0 }}" {{ '' if r.perlu_verifikasi_transfer or r.flow_target_group else 'checked' }}
+          aria-label="Pilih gabungan mulai baris {{ r._baris }}">
+          {% elif r.status == 'baru' %}<input form="formRekon" type="checkbox" name="news" value="{{ loop.index0 }}"
+          aria-label="Tambah transaksi baru dari baris {{ r._baris }}">
+          {% elif r.status == 'verifikasi' %}<input form="formRekon" type="checkbox" name="reviews" value="{{ loop.index0 }}"
+          aria-label="Verifikasi transit baris {{ r._baris }}">
+          {% elif r.status == 'verifikasi_ulang' %}<input form="formRekon" type="checkbox" name="reviews" value="{{ loop.index0 }}"
+          aria-label="Verifikasi ulang transfer baris {{ r._baris }}">{% endif %}</td>
+        <td class="c-row" data-label="Baris">{{ r._baris }}</td><td class="nowrap c-tgl">{{ r.tanggal|tgl }}</td>
+        <td class="c-dok"><b>{{ r.sap_doc }}</b><br><small>{{ r.teks_sap or r.purchase_order }}</small></td>
+        <td class="c-lok"><b>MvT {{ r.movement_type }}</b><br><small>{{ r.storage_location or 'lokasi tidak terbaca' }}</small></td>
+        <td class="desc c-mat">{{ r.material }}{% if r.special_stock %} {{ r.special_stock }}{% endif %}<br><small>{{ r.deskripsi }}</small></td>
+        <td class="num c-qty {{ 'plus' if r.qty > 0 else 'minus' }}">{{ '+' if r.qty > 0 }}{{ r.qty|angka }}</td>
+        <td class="desc c-pasang">
+          {% if r.transaksi %}<a href="{{ url_for('main.kartu_stok', mid=r.transaksi.material_id) }}">#{{ r.transaction_id }} · {{ r.transaksi.material }}</a>
+            <br><small>{{ r.transaksi.asal_label }} · {{ r.transaksi.qty|angka }} {{ r.transaksi.satuan }}
+            {% if r.transaksi.keterangan %} · {{ r.transaksi.keterangan }}{% endif %}</small>
+            {% if r.metode == 'deskripsi' %}<br><small class="minus">Kode berbeda; cocok dari deskripsi, tanggal, dan qty</small>{% endif %}
+            {% if r.flow_target_group and r.group_lead %}<br><small class="minus"><b>Konfirmasi pembagian:</b> transaksi #{{ r.transaction_id }} akan dibagi menjadi {{ r.flow_split_count }} tujuan blok plasma sesuai rincian SAP.</small>{% endif %}
+            {% if r.beda_plant and r.sap_material %}<br><small class="minus"><b>Plant berbeda:</b> transaksi akan dipindah dari {{ r.transaksi.plant }} ke {{ r.sap_material.plant }} setelah Anda centang.</small>
+            {% elif r.flow_through_plant %}<br><small class="muted"><b>Plant plasma tanpa saldo mengendap:</b> dokumen SAP {{ r.plant }} akan ditautkan, sedangkan stok transaksi tetap memakai material {{ r.transaksi.plant }}.</small>
+            {% elif r.beda_plant %}<br><small class="minus"><b>Plant berbeda:</b> MB52 {{ r.plant }} belum tersedia. Upload saldo plant tersebut agar transaksi dapat dipindahkan dengan aman.</small>{% endif %}
+            {% if r.pindah_material and not r.beda_plant %}<br><small class="minus">Material transaksi akan dipindah ke kode SAP {{ r.sap_material.material }}</small>{% endif %}
+          {% elif r.status == 'baru' %}<b>{{ r.sap_material.material }}</b>
+            {% if r.flow_chain_role == 'source' %}<br><small>Keluar CM3A → Blok {{ r.flow_chain_target.code }} melalui {{ r.flow_chain_via }}</small>
+            {% else %}<br><small>jenis transaksi menunggu keputusan operator</small>{% endif %}
+          {% elif r.status == 'rantai' %}<span class="muted">Mengikuti rantai baris {{ r.flow_chain_source_row }}</span>
+          {% elif r.status == 'pasangan' %}<span class="muted">Dokumen penerimaan pasangan baris {{ r.flow_pair_source_row }}</span>
+          {% elif r.status == 'reversal' %}<span class="muted">Pembatalan SAP; tidak membutuhkan transaksi aplikasi</span>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="c-arah">
+          {% if r.flow_chain_role == 'source' %}
+            <span class="badge b-keluar">Keluar ke Blok {{ r.flow_chain_target.code }}</span><br>
+            <small>{{ r.flow_chain_from }} → {{ r.flow_chain_via }} → {{ r.flow_chain_target.name }}
+              {% if r.flow_chain_receipt_date != r.flow_chain_source_date %}<br>Fisik {{ r.flow_chain_source_date|tgl }}, MvT 101 baru diposting {{ r.flow_chain_receipt_date|tgl }}{% endif %}</small>
+          {% elif r.status == 'rantai' %}
+            <span class="muted">Tidak mengubah stok lagi</span>
+          {% elif r.status == 'pasangan' %}
+            <span class="muted">Mengikuti verifikasi transfer pada baris {{ r.flow_pair_source_row }}</span>
+          {% elif r.status == 'reversal' %}
+            <span class="muted">MvT {{ r.movement_type }} berpasangan dengan dokumen {{ r.reversal_pair_doc }}</span>
+          {% elif r.perlu_verifikasi_transfer and r.status in ('cocok','baru','verifikasi','verifikasi_ulang') or (r.perlu_verifikasi_transfer and r.status == 'gabung' and r.group_lead) %}
+            <div class="rekon-arah" data-rekon-arah>
+              <label class="req" for="arah_{{ loop.index0 }}">Keputusan operator</label>
+              <select form="formRekon" id="arah_{{ loop.index0 }}" name="arah_{{ loop.index0 }}" data-arah>
+                <option value="">Pilih arah…</option>
+                {% if r.status in ('baru','verifikasi') %}<option value="transit">Masih transit — belum masuk ST01</option>{% endif %}
+                {% if r.status != 'verifikasi' and r.qty > 0 %}
+                  <option value="masuk_store">Masuk ST01 / Store</option>
+                  <option value="transfer_masuk">Transfer masuk dari kebun lain</option>
+                {% elif r.status != 'verifikasi' %}
+                  <option value="keluar_store">Keluar dari ST01 / Store</option>
+                  <option value="transfer_keluar">Transfer keluar ke kebun lain</option>
+                {% endif %}
+              </select>
+              <input form="formRekon" name="pihak_{{ loop.index0 }}" data-pihak placeholder="Nama/kode kebun asal atau tujuan">
+              <small data-arah-hint>{% if r.transfer_pair %}Pasangan SAP terdeteksi: {{ r.transfer_dari }} → {{ r.transfer_ke }} (PO {{ r.purchase_order }}). Tetap pilih arah untuk verifikasi.{% else %}Pilih arah sebelum mencentang dan menyimpan.{% endif %}</small>
+            </div>
+          {% elif r.status == 'ditinjau' %}
+            <span class="badge b-masuk">sudah diverifikasi</span><br>
+            <small>
+              {% if r.review.decision == 'transit' %}Masih transit; stok ST01 tidak berubah
+              {% elif r.review.decision == 'masuk_store' %}Masuk ST01 / Store
+              {% elif r.review.decision == 'keluar_store' %}Keluar dari ST01 / Store
+              {% elif r.review.decision == 'transfer_masuk' %}Transfer masuk dari {{ r.review.pihak }}
+              {% else %}Transfer keluar ke {{ r.review.pihak }}{% endif %}
+            </small>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="c-status">
+          {% if r.status == 'cocok' %}<span class="badge b-masuk">cocok otomatis</span>
+            {% if r.transaksi.sap_posted %}<br><small>✓ SAP sudah ada; nomor akan dilengkapi</small>{% endif %}
+          {% elif r.status == 'gabung' and r.flow_target_group %}<span class="badge b-penyesuaian">1 transaksi → {{ r.flow_split_count }} blok plasma</span>
+            <br><small>Total tetap {{ r.group_qty|angka }}; tujuan mengikuti catatan MvT 101</small>
+          {% elif r.status == 'gabung' %}<span class="badge b-masuk">{{ r.group_count }} dokumen → 1 transaksi</span>
+            {% if r.koreksi_skala %}<br><small class="minus">Qty aplikasi {{ r.transaksi.qty|angka }} akan dikoreksi menjadi {{ r.koreksi_qty|angka }}</small>{% endif %}
+          {% elif r.status == 'baru' %}<span class="badge {{ 'b-masuk' if r.aman else 'b-penyesuaian' }}">calon transaksi baru</span>
+            {% if r.kontrol %}<br><small>Residual sinkron {{ r.kontrol.required|angka }} → {{ r.residual_after|angka }}</small>
+              {% if not r.aman %}<br><small class="minus">Perlu pemeriksaan: residual justru membesar</small>{% endif %}
+            {% else %}<br><small>Material belum ada pada saldo MB52 ST01; keputusan operator wajib</small>{% endif %}
+          {% elif r.status == 'verifikasi' %}<span class="badge b-penyesuaian">hanya dapat ditandai transit</span>
+            <br><small>Material belum dikenal di master aplikasi</small>
+          {% elif r.status == 'verifikasi_ulang' %}<span class="badge b-penyesuaian">verifikasi ulang transfer</span>
+            <br><small>Keputusan lama “{{ r.review.decision }}” berbeda dari pasangan {{ r.transfer_dari }} → {{ r.transfer_ke }}</small>
+          {% elif r.status == 'rantai' %}<span class="badge">tercakup rantai plasma</span>
+            <br><small>Dokumen pendukung transaksi baris {{ r.flow_chain_source_row }}</small>
+          {% elif r.status == 'pasangan' %}<span class="badge">tercakup pasangan transfer</span>
+            <br><small>Dokumen pendukung transaksi baris {{ r.flow_pair_source_row }}; stok tidak dihitung lagi</small>
+          {% elif r.status == 'reversal' %}<span class="badge">dibatalkan di SAP</span>
+            <br><small>MvT {{ r.movement_type }} dan dokumen {{ r.reversal_pair_doc }} saling meniadakan; neto 0</small>
+          {% elif r.status == 'sudah' %}<span class="badge">sudah tersimpan</span>
+          {% elif r.status == 'ditinjau' %}<span class="badge">keputusan tersimpan</span>
+          {% elif r.status == 'ambigu' %}<span class="badge b-penyesuaian">{{ r.kandidat }} kandidat</span><br><small>Periksa manual</small>
+          {% else %}<span class="badge b-keluar">tidak ditemukan</span>{% endif %}
+          {% if nama_file52 and r.tercakup_mb52 is defined %}<br><small>{{ 'sudah tercakup MB52' if r.tercakup_mb52 else 'dianggap setelah jam MB52' }}</small>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if stats.cocok or stats.gabung or stats.baru or stats.verifikasi or stats.verifikasi_ulang %}<div class="actions" style="margin-top:.75rem;justify-content:flex-end">
+    <button form="formRekon" class="btn primary">Simpan pilihan</button></div>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Transaksi aplikasi yang belum mendapat pasangan ({{ pending|length }})</h2>
+  <p class="hint">Daftar ini membantu menemukan transaksi yang belum masuk MB51, berbeda tanggal/qty, atau masih memerlukan posting di SAP.</p>
+  <div class="tbl-wrap">
+  <table class="tbl">
+    <thead><tr><th>#</th><th>Tanggal</th><th>Jenis</th><th>Material</th><th class="num">Efek stok</th><th>Keterangan</th><th>Status SAP</th></tr></thead>
+    <tbody>
+    {% for t in pending %}<tr>
+      <td>{{ t.id }}</td><td class="nowrap">{{ t.tanggal|tgl }}</td><td>{{ t.asal_label }}</td>
+      <td class="desc"><a href="{{ url_for('main.kartu_stok', mid=t.material_id) }}">{{ t.material }}</a><br><small>{{ t.deskripsi }}</small></td>
+      <td class="num {{ 'plus' if t.efek > 0 else 'minus' }}">{{ '+' if t.efek > 0 }}{{ t.efek|angka }} {{ t.satuan }}</td>
+      <td><small>{{ t.keterangan or t.penerima or '' }}</small>
+        {% if t.alasan_tidak_cocok %}<br><small class="minus"><b>{{ t.alasan_tidak_cocok }}</b></small>{% endif %}
+        {% if t.sap_terdekat %}<br><small class="muted">Baris SAP terkait: {{ t.sap_terdekat }}</small>{% endif %}
+      </td>
+      <td>{% if t.sap_posted %}<span class="badge">✓ tanpa nomor</span>{% else %}<span class="badge b-penyesuaian">belum</span>{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="7" class="muted">Semua transaksi aplikasi sudah mendapat pasangan.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script>initRekonsiliasi();</script>{% endblock %}

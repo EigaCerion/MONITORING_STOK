@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% block title %}Stock Opname{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Stock Opname</h1>
+    <p class="muted">Beberapa anggota gudang dapat menghitung bersamaan. Penyesuaian stok dibuat saat sesi ditutup oleh admin atau petugas penerima delegasi.</p></div>
+  <a class="btn" href="{{ url_for('opname.riwayat') }}">Riwayat & Export Berita Acara</a>
+</div>
+
+{% if sesi_aktif %}
+<div class="card">
+  <h2 style="margin-top:0">Sesi yang sedang berjalan</h2>
+  <div class="tbl-wrap"><table class="tbl tbl-cards kartu-sesi"><thead><tr><th>Gudang</th><th>Jenis</th><th>Tanggal</th><th class="num">Dihitung</th><th class="num">Petugas</th><th>Dibuka oleh</th><th></th></tr></thead><tbody>
+  {% for s in sesi_aktif %}<tr>
+    <td class="c-mat"><b>{{ s.kebun_nama or s.plant }}</b><br><small>{{ s.plant }}</small></td><td data-label="Jenis">{{ s.jenis_barang }}</td><td data-label="Tanggal">{{ s.tanggal|tgl }}</td>
+    <td class="num" data-label="Dihitung">{{ s.n_hitung }}</td><td class="num" data-label="Petugas">{{ s.n_petugas }}</td><td data-label="Dibuka"><small>{{ s.pembuat }} · {{ s.created_at }}</small></td>
+    <td class="c-aksi"><a class="btn primary" href="{{ url_for('opname.hitung', sid=s.id) }}">Masuk & hitung</a></td>
+  </tr>{% endfor %}
+  </tbody></table></div>
+</div>
+{% elif user.role == 'petugas' %}
+  {% if delegasi_aktif %}<div class="flash ok"><b>Delegasi aktif.</b> Anda dapat membuka sesi untuk {{ delegasi_aktif.kebun_nama or delegasi_aktif.plant }} sampai {{ delegasi_aktif.valid_until }}.</div>
+  {% else %}<div class="flash warn">Belum ada sesi opname yang dibuka untuk gudang Anda. Minta admin membuka sesi atau memberikan delegasi sementara.</div>{% endif %}
+{% endif %}
+
+{% if user.role == 'admin' %}
+<div class="card" id="delegasi">
+  <h2 style="margin-top:0">Delegasikan pembukaan sesi</h2>
+  <p class="hint">Petugas terpilih dapat membuka dan menutup sesi yang dibuatnya sendiri pada gudang di akunnya. Penutupan wajib dikonfirmasi setelah semua anggota menyimpan hitungan. Membatalkan sesi dan pengaturan lainnya tetap khusus admin.</p>
+  {% if petugas_delegasi %}
+  <form method="post" action="{{ url_for('opname.delegasi') }}" class="filters">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="grow"><label class="req">Petugas gudang</label><select name="user_id" required><option value="">— pilih petugas —</option>
+      {% for u in petugas_delegasi %}<option value="{{ u.id }}">{{ u.nama }} · {{ u.kebun_nama or u.kebun_kode }}</option>{% endfor %}
+    </select></div>
+    <div><label class="req">Berlaku sampai</label><input type="datetime-local" name="valid_until" value="{{ delegasi_default }}" max="{{ delegasi_maks }}" required></div>
+    <button class="btn primary" name="aksi" value="beri">Berikan delegasi</button>
+  </form>
+  {% else %}<div class="flash warn">Belum ada akun Petugas Gudang yang memiliki kebun. Atur terlebih dahulu melalui menu Pengguna.</div>{% endif %}
+
+  {% if delegasi_rows %}
+  <div class="tbl-wrap" style="margin-top:.75rem"><table class="tbl tbl-cards">
+    <thead><tr><th>Petugas</th><th>Gudang</th><th>Berlaku sampai</th><th>Diberikan oleh</th><th></th></tr></thead>
+    <tbody>{% for d in delegasi_rows %}<tr>
+      <td data-label="Petugas"><b>{{ d.nama }}</b><br><small>{{ d.username }}</small></td>
+      <td data-label="Gudang">{{ d.kebun_nama or d.plant }} <small>({{ d.plant }})</small></td>
+      <td data-label="Berlaku sampai"><b>{{ d.valid_until }}</b></td>
+      <td data-label="Diberikan oleh"><small>{{ d.pemberi or '-' }} · {{ d.granted_at }}</small></td>
+      <td class="c-aksi"><form method="post" action="{{ url_for('opname.delegasi') }}" data-confirm="Cabut delegasi opname untuk {{ d.nama }}?">
+        <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="user_id" value="{{ d.user_id }}">
+        <button class="btn sm danger" name="aksi" value="cabut">Cabut</button></form></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if user.role == 'admin' or (delegasi_aktif and not sesi_aktif) %}
+<div class="card">
+  <h2 style="margin-top:0">{{ 'Mulai opname bersama' if user.role == 'admin' else 'Buka sesi opname gudang Anda' }}</h2>
+  <p class="hint">Selama sesi terbuka, transaksi gudang tersebut dikunci agar hitungan semua anggota tetap konsisten.</p>
+  <form method="post" action="{{ url_for('opname.mulai') }}" class="filters">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    {% if user.role == 'admin' %}<div><label class="req">Gudang / kebun</label><select name="plant" required><option value="">— pilih —</option>
+      {% for k in kebun %}<option value="{{ k.kode }}">{{ k.nama }} ({{ k.kode }})</option>{% endfor %}</select></div>
+    {% else %}<div><label>Gudang / kebun</label><input value="{{ delegasi_aktif.kebun_nama or delegasi_aktif.plant }} ({{ delegasi_aktif.plant }})" disabled>
+      <input type="hidden" name="plant" value="{{ delegasi_aktif.plant }}"></div>{% endif %}
+    <div><label class="req">Jenis barang</label><input name="jenis_barang" list="jenisListBersama" required placeholder="SPAREPART">
+      <datalist id="jenisListBersama">{% for j in jenis_pilihan %}<option value="{{ j }}">{% endfor %}</datalist></div>
+    <div><label>Tanggal</label><input type="date" name="tanggal" value="{{ hari_ini }}" max="{{ hari_ini }}"></div>
+    <div><label>Lokasi</label><input name="lokasi" value="{{ setelan.lokasi }}"></div>
+    <div class="grow"><label>Keterangan</label><input name="keterangan" placeholder="mis. opname bulanan Oktober"></div>
+    <button class="btn primary">Buka sesi bersama</button>
+  </form>
+</div>
+{% endif %}
+
+{% if user.role == 'admin' %}
+<details class="card">
+<summary><b>Opname langsung oleh satu admin</b></summary>
+<p class="hint">Gunakan bagian ini hanya bila opname dikerjakan sendiri. Untuk beberapa anggota gunakan sesi bersama di atas.</p>
+<form class="filters card" method="get">
+  <div class="grow"><label>Cari</label><input type="search" name="q" value="{{ request.args.q or '' }}"></div>
+  {% if kebun|length > 1 %}<div><label>Kebun</label><select name="kebun"><option value="">Semua</option>
+    {% for k in kebun %}<option value="{{ k.kode }}" {{ 'selected' if request.args.kebun == k.kode }}>{{ k.nama }}</option>{% endfor %}</select></div>{% endif %}
+  <div><label>Kategori</label><select name="kategori"><option value="">Semua</option>
+    {% for k in kategori %}<option value="{{ k.id }}" {{ 'selected' if request.args.kategori == k.id|string }}>{{ k.nama }}</option>{% endfor %}
+    <option value="none" {{ 'selected' if request.args.kategori == 'none' }}>Belum dikategorikan</option></select></div>
+  <div><label>Status</label><select name="status"><option value="">Semua</option>
+    {% for v, l in [('menipis','Menipis'),('habis','Habis / minus'),('selisih','Beda dengan SAP')] %}
+    <option value="{{ v }}" {{ 'selected' if request.args.status == v }}>{{ l }}</option>{% endfor %}</select></div>
+  <button class="btn primary">Tampilkan</button>
+</form>
+{% if total > rows|length %}<div class="flash warn">Menampilkan {{ rows|length }} dari {{ total }} material. Persempit dengan filter kategori/cari.</div>{% endif %}
+
+<div class="flash warn" id="draftInfo" hidden>Ada <b data-draft-n>0</b> barang yang sudah diisi qty fisiknya (termasuk dari pencarian lain).
+  Semua ikut tersimpan saat Anda menekan <b>Simpan Opname</b>. <button type="button" class="linkbtn" id="draftHapus">Kosongkan semua isian</button></div>
+
+<form method="post" class="card" style="padding:0" id="formOpname" data-draft-key="langsung">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <div class="tbl-wrap" style="border:0;border-radius:var(--radius) var(--radius) 0 0">
+  <table class="tbl">
+    <thead><tr><th>Material</th><th>Deskripsi</th><th>Sat</th><th class="num">Stok aplikasi</th><th class="num">SAP</th><th class="num">Qty Fisik</th><th class="num">Selisih</th><th>Keterangan</th></tr></thead>
+    <tbody id="draftLain"></tbody>
+    <tbody>
+    {% for m in rows %}
+      <tr data-opname-row data-mid="{{ m.id }}" data-material="{{ m.material }}" data-deskripsi="{{ m.deskripsi }}"
+          data-satuan="{{ m.satuan }}" data-stok="{{ m.stok }}" data-sap="{{ m.sap_unrestricted if m.sap_unrestricted is not none else '' }}">
+        <td class="nowrap">{{ m.material }} {{ ui.sp_badge(m) }}</td>
+        <td class="desc">{{ m.deskripsi }}<br><small>{{ m.kategori or '' }}</small></td>
+        <td>{{ m.satuan }}</td>
+        <td class="num">{{ m.stok|angka }}</td>
+        <td class="num"><small>{{ m.sap_unrestricted|angka if m.sap_unrestricted is not none }}</small></td>
+        <td class="num"><input class="inline" name="fisik_{{ m.id }}" inputmode="decimal" autocomplete="off" data-stok="{{ m.stok }}"></td>
+        <td class="num" data-diff></td>
+        <td><input class="inline" name="ket_{{ m.id }}" style="width:140px;text-align:left" placeholder="opsional"></td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="muted">Tidak ada data.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="sticky-bar">
+    <div><label class="req">Jenis barang</label><input name="jenis_barang" list="jenisList" value="{{ jenis_default }}" required placeholder="SPAREPART">
+      <datalist id="jenisList">{% for j in jenis_pilihan %}<option value="{{ j }}">{% endfor %}</datalist></div>
+    <div><label>Lokasi</label><input name="lokasi" value="{{ setelan.lokasi }}"></div>
+    <input type="hidden" name="alasan" value="{{ alasan[0] }}">
+    <div><label>Tanggal opname</label><input type="date" name="tanggal" value="{{ hari_ini }}" max="{{ hari_ini }}"></div>
+    <div><label>Keterangan</label><input name="keterangan" placeholder="mis. opname bulanan Oktober"></div>
+    <div style="flex:0 0 auto"><small id="opnameCount">0 barang diisi</small><br><button class="btn primary">Simpan Opname</button></div>
+  </div>
+</form>
+</details>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if user.role == 'admin' %}<script>initOpname();</script>{% endif %}{% endblock %}

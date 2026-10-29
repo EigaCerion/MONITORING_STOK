@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% block title %}Hitung Opname #{{ sesi.id }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><small><a href="{{ url_for('main.opname') }}">← Daftar sesi opname</a></small>
+    <h1>Opname Bersama #{{ sesi.id }}</h1>
+    <p class="muted"><b>{{ sesi.kebun_nama }}</b> ({{ sesi.plant }}) · {{ sesi.jenis_barang }} · {{ sesi.tanggal|tgl }} · dibuka oleh {{ sesi.oleh }}</p></div>
+  <div class="actions">
+    {% if user.role == 'admin' %}
+    <form method="post" action="{{ url_for('opname.batal', sid=sesi.id) }}" data-confirm="Batalkan sesi opname bersama ini? Semua hitungan akan dihapus.">
+      <input type="hidden" name="_csrf" value="{{ csrf }}"><button class="btn danger">Batalkan sesi</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="flash warn"><b>Gudang sedang dikunci untuk transaksi baru.</b> Isi hanya barang yang Anda hitung. Barang yang sudah disimpan anggota lain terkunci agar tidak tertimpa.</div>
+<div class="stats compact">
+  <div class="stat"><div class="lbl">Sudah dihitung</div><div class="val">{{ n_hitung|angka }}</div><small>dari {{ total|angka }} material</small></div>
+  <div class="stat"><div class="lbl">Anggota aktif</div><div class="val">{{ n_petugas|angka }}</div><small>punya hitungan tersimpan</small></div>
+</div>
+
+{% if bisa_menutup %}
+<div class="card opname-close-warning" id="tutup-sesi">
+  <div>
+    <h2>⚠ Menutup sesi akan menyelesaikan Stock Opname</h2>
+    <p>Setelah ditutup, anggota tidak dapat menambah atau memperbaiki hitungan. Seluruh selisih langsung dibuat sebagai penyesuaian stok.</p>
+  </div>
+  <div class="opname-close-members">
+    <b>Hitungan yang sudah tersimpan di server:</b>
+    {% if anggota %}<ul class="compact-list">{% for a in anggota %}
+      <li><b>{{ a.nama }}</b> · {{ a.n }} barang · terakhir simpan {{ a.terakhir_simpan }}</li>
+    {% endfor %}</ul>
+    {% else %}<p class="minus">Belum ada anggota yang menyimpan hitungan.</p>{% endif %}
+  </div>
+  <form method="post" action="{{ url_for('opname.selesai', sid=sesi.id) }}" class="opname-close-form"
+        data-confirm="Yakin semua anggota sudah menekan Simpan hitungan saya? Menutup sesi akan langsung mem-posting seluruh selisih stok.">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <label class="opname-close-confirm"><input type="checkbox" name="konfirmasi_semua" value="1" required data-close-check>
+      <span>Saya sudah memastikan <b>semua anggota menekan “Simpan hitungan saya”</b> dan tidak ada hitungan yang masih berupa draft di HP.</span>
+    </label>
+    <button class="btn primary" disabled data-close-button data-ready="{{ 1 if n_hitung else 0 }}">Tutup sesi & posting stok</button>
+  </form>
+</div>
+{% endif %}
+
+<form class="filters card opname-filter" method="get" data-filter>
+  <div class="grow"><label>Cari barang</label><input type="search" name="q" value="{{ request.args.q or '' }}" placeholder="kode / nama"></div>
+  <div><label>Kategori</label><select name="kategori"><option value="">Semua</option>
+    {% for k in kategori %}<option value="{{ k.id }}" {{ 'selected' if request.args.kategori == k.id|string }}>{{ k.nama }}</option>{% endfor %}
+    <option value="none" {{ 'selected' if request.args.kategori == 'none' }}>Belum dikategorikan</option></select></div>
+  <button class="btn primary">Tampilkan</button>
+</form>
+
+<div class="card opname-quick">
+  <label for="opnameCariCepat">Cari / scan kode material</label>
+  <div class="opname-quick-input">
+    <input type="search" id="opnameCariCepat" value="{{ request.args.q or '' }}" placeholder="Ketik kode atau nama barang…" autocomplete="off"
+           enterkeyhint="next" autofocus aria-describedby="opnameCariInfo">
+    <button type="button" class="btn" id="opnameCariHapus" aria-label="Hapus pencarian">×</button>
+  </div>
+  <div class="opname-quick-meta"><span id="opnameCariInfo">Ketik kode; barang pilihan dipindah ke paling atas.</span>
+    <span><b id="opnameTerlihat">{{ rows|length }}</b> barang tampil</span></div>
+</div>
+<div class="flash warn" id="opnameKosongCari" hidden>Tidak ditemukan pada daftar ini. Tekan <b>Enter</b> untuk mencari seluruh gudang.</div>
+
+<div class="flash warn" id="draftInfo" hidden>Ada <b data-draft-n>0</b> barang dalam draft di HP ini.
+  <button type="button" class="linkbtn" id="draftHapus">Kosongkan draft</button></div>
+
+<form method="post" class="card opname-form" style="padding:0" id="formOpname"
+      data-draft-key="sesi-{{ sesi.id }}-user-{{ user.id }}" data-quick="1">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <div class="tbl-wrap opname-list" style="border:0;border-radius:var(--radius) var(--radius) 0 0">
+  <table class="tbl tbl-cards kartu-opname">
+    <thead><tr><th>Material</th><th>Deskripsi</th><th>Sat</th><th class="num">Stok aplikasi</th><th class="num">SAP</th><th class="num">Qty Fisik</th><th class="num">Selisih</th><th>Keterangan / petugas</th></tr></thead>
+    <tbody id="opnamePrioritas"></tbody>
+    <tbody id="draftLain"></tbody>
+    <tbody id="opnameBaris">
+    {% for m in rows %}
+      {% set it = terhitung.get(m.id) %}
+      {% set terkunci = it and it.counted_by and it.counted_by != user.id %}
+      <tr data-opname-row data-mid="{{ m.id }}" data-material="{{ m.material }}" data-deskripsi="{{ m.deskripsi }}"
+          data-satuan="{{ m.satuan }}" data-stok="{{ it.stok_buku if it else m.stok }}"
+          data-search="{{ m.material }} {{ m.deskripsi }} {{ m.kategori or '' }}" data-locked="{{ 1 if terkunci else 0 }}"
+          data-owner="{{ it.dihitung_oleh if it else '' }}"
+          class="{{ 'wrn' if terkunci else '' }}">
+        <td class="nowrap c-kode">{{ m.material }} {{ ui.sp_badge(m) }}</td>
+        <td class="desc c-mat">{{ m.deskripsi }}<br><small>{{ m.kategori or '' }}</small></td>
+        <td class="c-sat">{{ m.satuan }}</td>
+        <td class="num c-stok" data-label="Stok">{{ (it.stok_buku if it else m.stok)|angka }}</td>
+        <td class="num c-sap" data-label="SAP"><small>{{ (it.stok_sap if it else m.sap_unrestricted)|angka if (it.stok_sap if it else m.sap_unrestricted) is not none }}</small></td>
+        <td class="num c-fisik"><label class="mobile-only" for="fisik_{{ m.id }}">Qty fisik</label>
+          <input class="inline opname-qty" id="fisik_{{ m.id }}" name="fisik_{{ m.id }}" inputmode="decimal"
+          autocomplete="off" enterkeyhint="next" data-stok="{{ it.stok_buku if it else m.stok }}"
+          value="{{ it.fisik if it else '' }}" {{ 'disabled' if terkunci }}></td>
+        <td class="num c-selisih" data-label="Selisih" data-diff></td>
+        <td class="c-ket"><input class="inline opname-ket" name="ket_{{ m.id }}" placeholder="Keterangan (opsional)"
+          value="{{ it.keterangan or '' if it else '' }}" {{ 'disabled' if terkunci }}>
+          {% if it %}<br><small><span class="badge {{ 'b-masuk' if it.counted_by == user.id else '' }}">✓ {{ it.dihitung_oleh or 'tersimpan' }}</span> {{ it.counted_at or '' }}</small>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="8" class="muted">Tidak ada material pada pencarian ini.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="sticky-bar opname-savebar">
+    <div><b>Sesi #{{ sesi.id }}</b><br><small>Hitungan disimpan tanpa mengubah stok sampai admin menutup sesi.</small></div>
+    <div class="opname-save-action"><small id="opnameCount">0 barang dalam draft</small><br><button class="btn primary">Simpan hitungan saya</button></div>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}<script>{% if request.args.saved %}opnameTersimpan('sesi-{{ sesi.id }}-user-{{ user.id }}');{% endif %}initOpname();</script>{% endblock %}

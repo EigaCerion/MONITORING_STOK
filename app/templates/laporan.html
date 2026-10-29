@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% from "_ikon.html" import ikon %}
+{% import "_macros.html" as ui with context %}
+{% block title %}Laporan{% endblock %}
+{% block content %}
+{% set args = request.args.to_dict() %}
+<div class="page-head">
+  <div><h1>Laporan Stok</h1><p class="muted">Periode {{ periode }} · {{ judul }}</p></div>
+  <div class="actions no-print">
+    {% set _ = args.update(format='xlsx', dari=dari, sampai=sampai) %}<a class="btn" href="?{{ args|urlencode }}">Unduh Excel</a>
+    {% set _ = args.update(format='pdf') %}<a class="btn primary" href="?{{ args|urlencode }}">Unduh PDF</a>
+  </div>
+</div>
+
+<form class="filters card" method="get">
+  <div><label>Dari</label><input type="date" name="dari" value="{{ dari }}"></div>
+  <div><label>Sampai</label><input type="date" name="sampai" value="{{ sampai }}"></div>
+  {% if not user.kebun_kode %}
+  <div><label>Kebun</label><select name="kebun"><option value="">Semua kebun</option>
+    {% for k in kebun %}<option value="{{ k.kode }}" {{ 'selected' if kebun_sel == k.kode }}>{{ k.nama }}</option>{% endfor %}</select></div>
+  {% endif %}
+  <div><label>Kategori</label><select name="kategori"><option value="">Semua kategori</option>
+    {% for k in kategori %}<option value="{{ k.id }}" {{ 'selected' if kategori_sel == k.id|string }}>{{ k.nama }}</option>{% endfor %}
+    <option value="none" {{ 'selected' if kategori_sel == 'none' }}>Belum dikategorikan</option></select></div>
+  <button class="btn primary">Tampilkan</button>
+</form>
+
+<div class="stats">
+  <div class="stat"><div class="lbl">Nilai saldo stok</div><div class="val">{{ d.total.saldo_nilai|rp }}</div></div>
+  <div class="stat"><div class="lbl">Jumlah transaksi</div><div class="val">{{ d.total.transaksi|angka }}</div></div>
+  <div class="stat"><div class="lbl">Transfer antar kebun</div><div class="val">{{ d.transfer|length }}</div></div>
+  <div class="stat {{ 'warn' if d.menipis }}"><div class="lbl">Material stok menipis</div><div class="val">{{ d.menipis|length }}</div></div>
+</div>
+
+<div class="card">
+  <h2>1. Ringkasan per Kebun</h2>
+  <div class="tbl-wrap">
+  <table class="tbl">
+    <thead><tr><th>Kebun</th><th class="num">Material</th><th class="num">Transaksi</th><th class="num">Masuk</th><th class="num">Keluar</th>
+      <th class="num">Transfer Masuk</th><th class="num">Transfer Keluar</th><th class="num">Penyesuaian</th><th class="num">Saldo Akhir</th></tr></thead>
+    <tbody>
+    {% for k in d.per_kebun %}
+      <tr><td>{{ k.nama }}</td><td class="num">{{ k.material|angka }}</td><td class="num">{{ k.transaksi|angka }}</td>
+        <td class="num">{{ k.masuk|rp }}</td><td class="num">{{ k.keluar|rp }}</td><td class="num">{{ k.transfer_masuk|rp }}</td>
+        <td class="num">{{ k.transfer_keluar|rp }}</td><td class="num">{{ k.penyesuaian|rp }}</td><td class="num"><b>{{ k.saldo_nilai|rp }}</b></td></tr>
+    {% else %}<tr><td colspan="9" class="muted">Tidak ada data.</td></tr>{% endfor %}
+    </tbody>
+    {% if d.per_kebun|length > 1 %}
+    <tfoot><tr><td>TOTAL</td><td class="num">{{ d.total.material|angka }}</td><td class="num">{{ d.total.transaksi|angka }}</td>
+      <td class="num">{{ d.total.masuk|rp }}</td><td class="num">{{ d.total.keluar|rp }}</td><td class="num">{{ d.total.transfer_masuk|rp }}</td>
+      <td class="num">{{ d.total.transfer_keluar|rp }}</td><td class="num">{{ d.total.penyesuaian|rp }}</td><td class="num">{{ d.total.saldo_nilai|rp }}</td></tr></tfoot>
+    {% endif %}
+  </table>
+  </div>
+  <p class="hint">Nilai rupiah dihitung dari harga rata-rata SAP (Value Unrestricted ÷ Unrestricted). Rincian qty per material ada di unduhan Excel (sheet "Rincian Mutasi").</p>
+</div>
+
+<div class="card">
+  <h2>2. Transfer antar Kebun</h2>
+  <div class="tbl-wrap">
+  <table class="tbl">
+    <thead><tr><th>Tanggal</th><th>Dari</th><th>Ke</th><th>Material</th><th class="num">Qty</th><th>No. Dokumen</th><th>Foto</th></tr></thead>
+    <tbody>
+    {% for t in d.transfer %}
+      <tr><td class="nowrap">{{ t.tanggal|tgl }}</td><td>{{ t.asal_nama }}</td><td>{{ t.tujuan_nama }}</td>
+        <td class="desc">{{ t.deskripsi }}<br><small>{{ t.material }}</small></td><td class="num">{{ t.qty|angka }} {{ t.satuan }}</td>
+        <td>{{ t.nomor_dokumen }}</td>
+        <td>{% if t.foto %}<a class="icon-link" href="{{ url_for('main.foto', nama=t.foto) }}" target="_blank">{{ ikon('kamera', 16) }}<span>1</span></a>{% elif t.jenis == 'transfer_keluar' %}<small class="minus">belum</small>{% endif %}
+          {% if t.foto_2 %} <a class="icon-link" href="{{ url_for('main.foto', nama=t.foto_2) }}" target="_blank">{{ ikon('kamera', 16) }}<span>2</span></a>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="7" class="muted">Tidak ada transfer pada periode ini.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr))">
+  <div class="card">
+    <h2>3. Stok per Kategori</h2>
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Kategori</th><th class="num">Material</th><th class="num">Nilai Stok</th><th class="num">Menipis</th><th class="num">Habis</th></tr></thead>
+      <tbody>
+      {% for k in d.per_kategori %}
+        <tr><td>{{ k.kategori }}</td><td class="num">{{ k.material|angka }}</td><td class="num">{{ k.nilai|rp }}</td>
+          <td class="num {{ 'low' if k.menipis }}">{{ k.menipis }}</td><td class="num">{{ k.habis }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Material Stok Menipis</h2>
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Material</th><th class="num">Stok</th><th class="num">Min</th><th>Sat</th></tr></thead>
+      <tbody>
+      {% for x in d.menipis %}
+        <tr><td class="desc">{{ x.deskripsi }}<br><small>{{ x.material }} · {{ x.kategori }}</small></td>
+          <td class="num low">{{ x.saldo_akhir|angka }}</td><td class="num">{{ x.minimum|angka }}</td><td>{{ x.satuan }}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted">Tidak ada. Atur stok minimum di menu Master SAP.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

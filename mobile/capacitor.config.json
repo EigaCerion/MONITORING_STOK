@@ -1,0 +1,10 @@
+{
+  "appId": "id.citramahkota.monitoringstok",
+  "appName": "Monitoring Stok",
+  "webDir": "dist",
+  "backgroundColor": "#11161b",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}

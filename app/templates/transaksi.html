@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Transaksi{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Transaksi</h1><p class="muted">{{ total|angka }} transaksi{% if request.args.bon %} · bon <b>{{ request.args.bon }}</b> · <a href="{{ url_for('main.transaksi') }}">tampilkan semua</a>{% endif %}</p></div>
+  <div class="actions">
+    {% if user.role in ('admin','petugas') %}<a class="btn primary" href="{{ url_for('main.input_transaksi') }}">{{ ikon('tambah', 18) }}<span>Input</span></a>{% endif %}
+    {% if user.role == 'admin' %}<a class="btn" href="{{ url_for('admin.import_transaksi') }}">{{ ikon('excel', 18) }}<span>Import Excel</span></a>{% endif %}
+    <a class="btn" href="{{ url_for('main.export_transaksi', **request.args) }}">{{ ikon('unduh', 18) }}<span>Export Excel</span></a>
+  </div>
+</div>
+<form class="filters card" method="get" data-filter>
+  <div class="grow"><label>Cari</label><input type="search" name="q" value="{{ request.args.q or '' }}" placeholder="material / dokumen / penerima / dok SAP"></div>
+  <div><label>Dari</label><input type="date" name="dari" value="{{ request.args.dari or '' }}"></div>
+  <div><label>Sampai</label><input type="date" name="sampai" value="{{ request.args.sampai or '' }}"></div>
+  <div><label>Jenis</label><select name="jenis"><option value="">Semua</option>
+    {% for k, v in JENIS_LABEL.items() %}<option value="{{ k }}" {{ 'selected' if request.args.jenis == k }}>{{ v }}</option>{% endfor %}</select></div>
+  {% if not user.kebun_kode and kebun|length > 1 %}
+  <div><label>Kebun</label><select name="kebun"><option value="">Semua</option>
+    {% for k in kebun %}<option value="{{ k.kode }}" {{ 'selected' if request.args.kebun == k.kode }}>{{ k.nama }}</option>{% endfor %}</select></div>
+  {% endif %}
+  <div><label>Status</label><select name="status"><option value="">Semua</option>
+    {% for v, l in [('belum_kembali','Barang lama belum kembali'),('belum_posting','Belum diinput SAP'),('sudah_posting','Sudah diinput SAP (✓)'),('tanpa_foto','Keluar tanpa foto'),('dikoreksi','Pernah dikoreksi'),('batal','Dibatalkan')] %}
+    <option value="{{ v }}" {{ 'selected' if request.args.status == v }}>{{ l }}</option>{% endfor %}</select></div>
+  <button class="btn primary">{{ ikon('filter', 18) }}<span>Tampilkan</span></button>
+</form>
+
+{% set bisa_posting = user.role in ('admin','petugas') %}
+<form method="post" action="{{ url_for('main.posting_sap') }}" id="formPosting">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <input type="hidden" name="kembali" value="{{ request.full_path }}">
+</form>
+<div class="tbl-wrap">
+<table class="tbl tbl-cards kartu-trx">
+  <thead><tr>{% if bisa_posting %}<th><input type="checkbox" form="formPosting" data-check-all="ids" aria-label="Pilih semua"></th>{% endif %}<th>#</th><th>Tanggal</th><th>Jenis</th><th>Material</th><th class="num">Qty</th><th>Dokumen</th>
+    <th>Penerima / Kebun</th><th>Keterangan</th><th>SAP</th><th>Sumber</th><th></th></tr></thead>
+  <tbody>
+  {% for t in rows %}
+    <tr class="{{ 'batal' if t.batal }}">
+      {% if bisa_posting %}<td class="keep c-cek">{% if not t.batal and t.sumber != 'sinkron_sap' %}<input type="checkbox" form="formPosting" name="ids" value="{{ t.id }}" aria-label="Pilih #{{ t.id }}">{% endif %}</td>{% endif %}
+      <td class="c-id"><small>#{{ t.id }}{% if t.bon %}<br><a href="{{ url_for('main.transaksi', bon=t.bon) }}" title="Lihat semua barang di bon ini">{{ t.bon }}</a>{% endif %}</small></td>
+      <td class="nowrap c-tgl">{{ t.tanggal|tgl }}</td>
+      <td class="keep c-jenis">{{ ui.jenis_badge(t.jenis) }}{% if t.batal %}<br><small class="minus">BATAL</small>{% elif t.updated_at %}<br><small title="{{ t.updated_at }}">dikoreksi</small>{% endif %}</td>
+      <td class="desc c-mat"><a href="{{ url_for('main.kartu_stok', mid=t.material_id) }}">{{ t.deskripsi }}</a><br><small>{{ t.material }}</small></td>
+      <td class="num c-qty {{ 'plus' if t.qty > 0 and t.jenis in ('masuk','transfer_masuk','penyesuaian') else 'minus' }}">{{ t.qty|angka }} {{ t.satuan }}</td>
+      <td class="c-dok">{{ t.nomor_dokumen or '' }}</td>
+      <td class="c-pen">{{ t.penerima or '' }}
+        {% if t.jenis == 'transfer_keluar' %}<br><small>→ {{ t.tujuan_nama or t.kebun_tujuan }}</small>{% endif %}
+        {% if t.jenis == 'transfer_masuk' %}<br><small>← {{ t.asal_nama or t.kebun_asal }}</small>{% endif %}</td>
+      <td class="c-ket"><small>{% if t.alasan %}<b>{{ t.alasan }}</b> {% endif %}{{ t.keterangan or '' }}
+        {% if t.tujuan_tipe %}<br><b>Tujuan BON:</b> {{ t.tujuan_tipe|upper }}{% if t.tujuan_kode %} · {{ t.tujuan_kode }}{% endif %}{% if t.aktivitas_kode %} · aktivitas {{ t.aktivitas_kode }}{% endif %}{% endif %}
+        {% if t.batal %}<br>Batal: {{ t.batal_alasan }}{% endif %}</small>{{ ui.info_kembali(t, kembali) }}</td>
+      <td class="keep c-sap">{{ ui.status_sap(t) }}</td>
+      <td class="c-src"><small>{{ t.sumber }} · {{ t.oleh }}</small>
+        {% if t.foto %}<br><a class="icon-link" href="{{ url_for('main.foto', nama=t.foto) }}" target="_blank">{{ ikon('kamera', 16) }}<span>foto 1</span></a>
+        {% elif t.jenis in ('keluar','transfer_keluar') and not t.batal %}<br><small class="minus">tanpa foto</small>{% endif %}
+        {% if t.foto_2 %}<br><a class="icon-link" href="{{ url_for('main.foto', nama=t.foto_2) }}" target="_blank">{{ ikon('kamera', 16) }}<span>foto 2</span></a>{% endif %}</td>
+      <td class="nowrap keep c-aksi">{{ ui.aksi_transaksi(t, user) }}</td>
+    </tr>
+  {% else %}<tr><td colspan="12" class="muted">Tidak ada transaksi.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% if bisa_posting and rows %}
+<div class="card sticky-bar bar-pilih" data-pilih-bar="formPosting" hidden>
+  <div class="pilih-info"><b data-pilih-n>0</b> dipilih</div>
+  <div><label>No. dokumen SAP (opsional)</label><input form="formPosting" name="sap_doc" placeholder="mis. 4900012345"></div>
+  <button form="formPosting" class="btn primary" name="aksi" value="posting">Tandai sudah posting SAP</button>
+  <button form="formPosting" class="btn" name="aksi" value="batal" data-confirm="Kembalikan status transaksi yang dicentang menjadi belum posting?">Batalkan tanda posting</button>
+  {% if user.role == 'admin' %}
+  <button form="formPosting" class="btn" formaction="{{ url_for('main.gabung_bon') }}"
+    data-confirm="Satukan transaksi yang dicentang menjadi satu bon? Qty dan stok tidak berubah.">Satukan jadi 1 bon</button>
+  <button form="formPosting" class="btn" formaction="{{ url_for('main.pisah_bon') }}"
+    data-confirm="Pisahkan transaksi yang dicentang menjadi bon baru? Qty dan stok tidak berubah.">Pisahkan jadi bon baru</button>
+  {% endif %}
+</div>
+{% endif %}
+{{ ui.pager(hal, total, per_hal) }}
+{{ ui.dialog_transaksi(request.full_path) }}
+{% endblock %}

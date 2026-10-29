@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Log Aktivitas{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Log Aktivitas</h1><p class="muted">Catatan perubahan stok manual, koreksi, pembatalan, upload & import.</p></div></div>
+<div class="tbl-wrap">
+<table class="tbl">
+  <thead><tr><th>Waktu</th><th>Pengguna</th><th>Aksi</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for a in rows %}
+    <tr><td class="nowrap">{{ a.waktu }}</td><td>{{ a.nama }}</td><td><span class="badge">{{ a.aksi }}</span></td><td><small>{{ a.detail }}</small></td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Belum ada aktivitas.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+<div class="pager">
+  {% if hal > 1 %}<a class="btn sm" href="?hal={{ hal-1 }}">‹ Sebelumnya</a>{% endif %}
+  {% if rows|length == 100 %}<a class="btn sm" href="?hal={{ hal+1 }}">Berikutnya ›</a>{% endif %}
+</div>
+{% endblock %}

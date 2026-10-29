@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Ganti Password{% endblock %}
+{% block content %}
+<div class="login card" style="margin-top:2rem">
+  <h1>Ganti Password</h1>
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label>Password lama</label><input type="password" name="lama" required autocomplete="current-password"></div>
+    <div class="field"><label>Password baru</label><input type="password" name="baru" required minlength="6" autocomplete="new-password"></div>
+    <div class="field"><label>Ulangi password baru</label><input type="password" name="ulang" required minlength="6" autocomplete="new-password"></div>
+    <button class="btn primary block">Simpan</button>
+  </form>
+</div>
+{% endblock %}

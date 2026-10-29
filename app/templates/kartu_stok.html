@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Kartu Stok {{ m.material }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <small><a href="{{ url_for('main.stok') }}">← Stok</a></small>
+    <h1>{{ m.deskripsi }}</h1>
+    <p class="muted">{{ m.material }} {{ ui.sp_badge(m) }} · {{ m.kebun_nama }} · {{ m.kategori or 'Belum dikategorikan' }} · Group {{ m.material_group }}</p>
+  </div>
+  {% if user.role == 'admin' %}<div class="actions">{{ ui.tombol_ubah(m) }}</div>{% endif %}
+</div>
+
+{% if m.input_locked %}
+<div class="flash error"><b>KODE MATERIAL DIKUNCI — TRANSAKSI BARU DIBLOKIR.</b>
+  {{ m.input_lock_reason or 'Gunakan kode material pengganti yang ditentukan admin.' }} Riwayat dan stok lama tetap ditampilkan.</div>
+{% endif %}
+{% if m.expired or (m.expired_at and m.expired_at <= today()) %}
+<div class="flash error"><b>BARANG EXPIRED — TRANSAKSI BARU DIBLOKIR.</b>{% if m.expired_at %} Tanggal expired: {{ m.expired_at|tgl }}.{% endif %}
+  Riwayat lama tetap ditampilkan untuk audit.</div>
+{% elif m.expired_at %}
+<div class="flash warn">Tanggal expired material ini: <b>{{ m.expired_at|tgl }}</b>. Setelah tanggal tersebut transaksi baru otomatis diblokir.</div>
+{% endif %}
+
+<div class="stats">
+  <div class="stat"><div class="lbl">Stok aplikasi</div><div class="val" data-stok-for="{{ m.id }}">{{ m.stok|angka }}</div><small>{{ m.satuan }}</small></div>
+  <div class="stat"><div class="lbl">Stok SAP</div><div class="val">{{ m.sap_perkiraan|angka if m.sap_perkiraan is not none else '–' }}</div><small>file {{ m.sap_unrestricted|angka if m.sap_unrestricted is not none }} per {{ m.sap_updated_at or '-' }}{% if m.n_tunggu_upload %} {{ '+' if m.tunggu_sap > 0 }}{{ m.tunggu_sap|angka }} diinput ✓ setelahnya{% endif %}</small></div>
+  {% if m.sap_unrestricted is not none %}
+  <div class="stat {{ 'danger' if m.n_selisih_fisik }}"><div class="lbl">Selisih fisik belum di SAP</div><div class="val">{{ '+' if m.selisih_fisik > 0 }}{{ m.selisih_fisik|angka }}</div><small>{{ m.n_selisih_fisik }} penyesuaian (Ubah Qty / opname)</small></div>
+  <div class="stat"><div class="lbl">Trx harian belum di SAP</div><div class="val">{{ '+' if m.pending_rutin > 0 }}{{ m.pending_rutin|angka }}</div><small>{{ m.n_pending_rutin }} transaksi</small></div>
+  <div class="stat {{ 'danger' if (m.selisih_nyata|abs) > 0.0005 }}"><div class="lbl">Selisih nyata</div><div class="val">{{ m.selisih_nyata|angka }}</div><small>aplikasi − SAP − belum diinput</small></div>
+  {% endif %}
+  <div class="stat"><div class="lbl">Stok awal</div><div class="val">{{ m.stok_awal|angka }}</div><small>per {{ m.tgl_stok_awal|tgl }}</small></div>
+  <div class="stat"><div class="lbl">Stok minimum</div><div class="val">{{ m.stok_minimum|angka }}</div></div>
+</div>
+
+<div class="tbl-wrap">
+<table class="tbl tbl-cards kartu-riwayat">
+  <thead><tr><th>#</th><th>Tanggal</th><th>Jenis</th><th class="num">Masuk</th><th class="num">Keluar</th><th class="num">Saldo</th>
+    <th>Dokumen / Penerima / Kebun</th><th>Keterangan</th><th>SAP</th><th>Oleh</th><th></th></tr></thead>
+  <tbody>
+  {% for t in baris %}
+    <tr class="{{ 'batal' if t.batal }}">
+      <td class="c-id"><small>#{{ t.id }}</small></td>
+      <td class="nowrap c-tgl">{{ t.tanggal|tgl }}</td>
+      <td class="keep c-jenis">{{ ui.jenis_badge(t.jenis) }}{% if t.batal %}<br><small class="minus">BATAL: {{ t.batal_alasan }}</small>{% endif %}</td>
+      <td class="num plus c-in">{{ ('+' ~ (t.efek|angka)) if t.efek > 0 }}</td>
+      <td class="num minus c-out">{{ ('−' ~ ((-t.efek)|angka)) if t.efek < 0 }}</td>
+      <td class="num c-saldo" data-label="Saldo"><b>{{ t.saldo|angka }}</b></td>
+      <td class="c-dok">{{ t.nomor_dokumen or '' }}
+        {% if t.bon %}<br><small><a href="{{ url_for('main.transaksi', bon=t.bon) }}">{{ t.bon }}</a></small>{% endif %}
+        {% if t.penerima %}<br><small>Penerima: {{ t.penerima }}</small>{% endif %}
+        {% if t.jenis == 'transfer_keluar' %}<br><small>→ {{ t.tujuan_nama or t.kebun_tujuan }}</small>{% endif %}
+        {% if t.jenis == 'transfer_masuk' %}<br><small>← {{ t.asal_nama or t.kebun_asal }}</small>{% endif %}
+        {% if t.foto %}<br><a class="icon-link" href="{{ url_for('main.foto', nama=t.foto) }}" target="_blank">{{ ikon('kamera', 16) }}<span>foto 1</span></a>{% endif %}
+        {% if t.foto_2 %} · <a class="icon-link" href="{{ url_for('main.foto', nama=t.foto_2) }}" target="_blank">{{ ikon('kamera', 16) }}<span>foto 2</span></a>{% endif %}
+      </td>
+      <td class="c-ket"><small>{% if t.alasan %}<b>{{ t.alasan }}</b> {% endif %}{{ t.keterangan or '' }}
+        {% if t.tujuan_tipe %}<br><b>Tujuan BON:</b> {{ t.tujuan_tipe|upper }}{% if t.tujuan_kode %} · {{ t.tujuan_kode }}{% endif %}{% if t.aktivitas_kode %} · aktivitas {{ t.aktivitas_kode }}{% endif %}{% endif %}</small>{{ ui.info_kembali(dict(t, wajib_kembali=m.wajib_kembali), kembali) }}</td>
+      <td class="keep c-sap">{{ ui.status_sap(t) }}</td>
+      <td class="c-src"><small>{{ t.oleh }}{% if t.updated_at %}<br>diubah {{ t.diubah_oleh }} {{ t.updated_at }}{% endif %}</small></td>
+      <td class="nowrap keep c-aksi">{{ ui.aksi_transaksi(dict(t, wajib_kembali=m.wajib_kembali, deskripsi=m.deskripsi, satuan=m.satuan), user) }}</td>
+    </tr>
+  {% endfor %}
+    <tr class="baris-awal"><td class="c-id"></td><td class="c-tgl">{{ m.tgl_stok_awal|tgl }}</td><td class="c-jenis"><span class="badge">STOK AWAL</span></td><td class="c-in"></td><td class="c-out"></td>
+      <td class="num c-saldo" data-label="Saldo"><b>{{ m.stok_awal|angka }}</b></td><td colspan="5" class="c-dok"><small>dari export SAP</small></td></tr>
+  </tbody>
+</table>
+</div>
+{% if user.role == 'admin' %}{{ ui.dialog_ubah(alasan, hari_ini) }}{% endif %}
+{{ ui.dialog_transaksi(request.path) }}
+{% endblock %}

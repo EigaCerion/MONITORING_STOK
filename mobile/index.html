@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#1f6e43">
+  <title>Monitoring Stok</title>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-mark" aria-hidden="true">MS</div>
+    <div><b>Monitoring Stok</b><small id="headerUser">Aplikasi Gudang</small></div>
+    <span id="netBadge" class="status-pill neutral">Memeriksa…</span>
+  </header>
+
+  <main>
+    <section id="screenHome" class="screen active" aria-labelledby="homeTitle">
+      <div class="hero">
+        <div><small>OPERASIONAL GUDANG</small><h1 id="homeTitle">Tetap bekerja saat sinyal putus</h1>
+          <p>Data disimpan di HP dan dikirim ke laptop melalui Tailscale saat tersambung.</p></div>
+        <div class="hero-icon">⇄</div>
+      </div>
+
+      <div id="setupCard" class="card" hidden>
+        <h2>Hubungkan aplikasi</h2>
+        <p class="muted">Isi alamat Tailscale laptop dan login dengan akun Monitoring Stok.</p>
+        <form id="loginForm">
+          <label>Alamat server Tailscale
+            <input id="serverUrl" type="url" inputmode="url" placeholder="http://100.x.x.x:8000" required>
+          </label>
+          <label>Nama perangkat
+            <input id="deviceName" maxlength="80" placeholder="HP Gudang Lisen" required>
+          </label>
+          <div class="form-grid">
+            <label>Username<input id="username" autocomplete="username" required></label>
+            <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+          </div>
+          <button class="btn primary block" type="submit">Hubungkan dan login</button>
+        </form>
+      </div>
+
+      <div id="syncCard" class="card" hidden>
+        <div class="card-head"><div><small>SINKRON PAGI</small><h2>Siapkan data hari ini</h2></div><span id="syncState" class="round-state">!</span></div>
+        <p id="syncInfo" class="muted">Belum ada data untuk hari ini.</p>
+        <button id="syncButton" class="btn primary block">Sinkron sekarang</button>
+      </div>
+
+      <div id="summaryGrid" class="summary-grid" hidden>
+        <button class="summary-card" data-go="input"><span id="materialCount">0</span><small>Material tersedia</small></button>
+        <button class="summary-card" data-go="queue"><span id="pendingCount">0</span><small>Menunggu upload</small></button>
+      </div>
+
+      <div id="updateCard" class="card update-card" hidden>
+        <div class="card-head"><div><small>PEMBARUAN</small><h2 id="updateTitle">Versi baru tersedia</h2></div><span>↓</span></div>
+        <p id="updateNotes" class="muted"></p>
+        <button id="updateButton" class="btn block">Unduh pembaruan</button>
+      </div>
+    </section>
+
+    <section id="screenInput" class="screen" aria-labelledby="inputTitle">
+      <div class="screen-title"><div><small>TRANSAKSI OFFLINE</small><h1 id="inputTitle">Barang keluar</h1></div><span id="draftBadge" class="status-pill neutral">Belum disimpan</span></div>
+      <div id="inputLocked" class="notice warn" hidden>Sinkron pagi wajib dilakukan sebelum membuat transaksi hari ini.</div>
+      <form id="transactionForm" class="stack">
+        <div class="card">
+          <h2>1. Barang</h2>
+          <label>Cari kode atau nama material
+            <input id="materialSearch" type="search" autocomplete="off" placeholder="mis. FAME atau 929.001.Z18">
+          </label>
+          <div id="materialResults" class="picker" hidden></div>
+          <div id="selectedItems" class="item-list"></div>
+          <p id="emptyItems" class="muted">Belum ada barang dipilih.</p>
+        </div>
+
+        <div class="card">
+          <h2>2. Detail BON</h2>
+          <div class="form-grid">
+            <label>Nama penerima<input id="recipient" autocomplete="off" required></label>
+            <label>Tanggal<input id="transactionDate" type="date" required></label>
+          </div>
+          <label for="targetSearch">Tujuan BON</label>
+          <input id="targetSearch" type="search" autocomplete="off" autocapitalize="characters"
+                 placeholder="Ketik Kantor, G17R, DT32, EX17, atau AFD 3">
+          <div id="targetResults" class="picker target-picker" hidden></div>
+          <div id="targetConfirmation" class="target-confirmation" hidden>
+            <span>✓</span><div><b id="targetConfirmationName"></b><small id="targetConfirmationDetail"></small></div>
+          </div>
+          <p class="hint">Aplikasi mengenali tujuan dan menampilkannya untuk dikonfirmasi. Tujuan dapat diubah per barang.</p>
+          <label>Keterangan<input id="note" autocomplete="off" placeholder="opsional, mis. Afd 3"></label>
+        </div>
+
+        <div class="card">
+          <h2>3. Foto bukti</h2>
+          <div class="photo-block">
+            <b>Foto 1 — orang / penerima <span class="required">*</span></b>
+            <div class="photo-actions">
+              <label class="btn primary">Ambil foto<input id="photoCamera" type="file" accept="image/*" capture="environment" hidden></label>
+              <label class="btn">Pilih galeri<input id="photoGallery" type="file" accept="image/*" hidden></label>
+            </div>
+            <img id="photoPreview" class="photo-preview" alt="Pratinjau foto pertama" hidden>
+          </div>
+          <div class="photo-block">
+            <b>Foto 2 — bon / dokumen (opsional)</b>
+            <div class="photo-actions">
+              <label class="btn primary">Foto bon<input id="photo2Camera" type="file" accept="image/*" capture="environment" hidden></label>
+              <label class="btn">Pilih galeri<input id="photo2Gallery" type="file" accept="image/*" hidden></label>
+            </div>
+            <img id="photo2Preview" class="photo-preview" alt="Pratinjau foto kedua" hidden>
+          </div>
+          <div id="returnPhotoBlock" class="photo-block" hidden>
+            <b>Foto barang lama yang dikembalikan <span class="required">*</span></b>
+            <div class="photo-actions">
+              <label class="btn primary">Ambil foto<input id="returnPhotoCamera" type="file" accept="image/*" capture="environment" hidden></label>
+              <label class="btn">Pilih galeri<input id="returnPhotoGallery" type="file" accept="image/*" hidden></label>
+            </div>
+            <img id="returnPhotoPreview" class="photo-preview" alt="Pratinjau barang lama" hidden>
+          </div>
+        </div>
+
+        <button class="btn primary block save-button" type="submit">Simpan ke antrean HP</button>
+      </form>
+    </section>
+
+    <section id="screenQueue" class="screen" aria-labelledby="queueTitle">
+      <div class="screen-title"><div><small>UPLOAD AKHIR HARI</small><h1 id="queueTitle">Antrean transaksi</h1></div><span id="queueCountBadge" class="status-pill neutral">0 antrean</span></div>
+      <div class="card">
+        <p class="muted">Pastikan Tailscale aktif dan laptop server menyala. Pengiriman ulang aman dan tidak membuat BON ganda.</p>
+        <button id="uploadAllButton" class="btn primary block">Upload semua sekarang</button>
+      </div>
+      <div id="queueList" class="queue-list"></div>
+      <div id="queueEmpty" class="empty-state"><b>Antrean kosong</b><p>Semua transaksi sudah diterima server.</p></div>
+    </section>
+
+    <section id="screenSettings" class="screen" aria-labelledby="settingsTitle">
+      <div class="screen-title"><div><small>PENGATURAN</small><h1 id="settingsTitle">Perangkat dan aplikasi</h1></div><span id="appVersion" class="status-pill neutral"></span></div>
+      <div class="card">
+        <h2>Koneksi server</h2>
+        <p id="settingsServer" class="mono muted">Belum diatur</p>
+        <button id="testConnection" class="btn block">Periksa koneksi Tailscale</button>
+        <button id="logoutButton" class="btn danger block">Keluar dan ganti akun</button>
+      </div>
+      <div class="card">
+        <h2>Pembaruan aplikasi</h2>
+        <p id="updateSettingsInfo" class="muted">Link GitHub diatur oleh Admin pada laptop server.</p>
+        <button id="checkUpdateButton" class="btn block">Periksa pembaruan</button>
+      </div>
+      <div class="card">
+        <h2>Identitas perangkat</h2>
+        <p id="deviceIdText" class="mono muted"></p>
+        <p class="hint">Admin dapat menonaktifkan perangkat ini dari panel Aplikasi Mobile.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Menu utama">
+    <button class="active" data-screen="home"><span>⌂</span>Beranda</button>
+    <button data-screen="input"><span>＋</span>Input</button>
+    <button data-screen="queue"><span>⇧</span>Upload</button>
+    <button data-screen="settings"><span>⚙</span>Pengaturan</button>
+  </nav>
+
+  <dialog id="targetDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>TUJUAN BARANG</small><h2 id="targetDialogTitle">Pilih tujuan</h2></div><button id="targetDialogClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <input id="targetDialogSearch" type="search" autocomplete="off" autocapitalize="characters"
+             placeholder="Ketik Kantor, G17R, DT32, EX17, atau AFD 3">
+      <div id="targetDialogResults" class="picker target-picker" hidden></div>
+      <p class="hint">Ketik kode atau nama. Hasil yang cocok akan muncul di atas.</p>
+    </div>
+  </dialog>
+  <dialog id="messageDialog">
+    <div class="dialog-card"><h2 id="dialogTitle">Informasi</h2><div id="dialogBody"></div><button id="dialogClose" class="btn primary block">Tutup</button></div>
+  </dialog>
+  <div id="toast" role="status"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

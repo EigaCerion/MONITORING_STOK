@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% block title %}Master SAP{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Master Material (SAP)</h1>
+    <p class="muted">{{ info.n|angka }} material{% if info.terakhir %} · upload SAP terakhir {{ info.terakhir }}{% endif %}{% if info.awal %} · stok awal per {{ info.awal|tgl }}{% endif %}</p></div>
+  <div class="actions">
+    <a class="btn primary" href="{{ url_for('admin.material_baru') }}">+ Tambah material baru</a>
+    <a class="btn" href="{{ url_for('admin.unduh_template', nama='TEMPLATE_MASTER_SAP.xlsx') }}">Unduh template</a>
+  </div>
+</div>
+
+{% if perlu_reset %}
+<div class="flash warn">Database sudah dibersihkan untuk uji coba nyata. Upload <b>tarikan SAP terbaru</b> di bawah dengan opsi
+  <b>Mulai baru</b> tercentang, dan isi <b>Data SAP per</b> sesuai jam tarikan.</div>
+{% endif %}
+<div class="card">
+  <h2>Upload export SAP</h2>
+  <form method="post" action="{{ url_for('admin.master_upload') }}" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label class="req">File export SAP (.xlsx)</label><input type="file" name="file" accept=".xlsx,.xlsm" required>
+      <div class="hint">Kolom sama persis dengan export SAP (14 kolom). Baris total SAP & catatan otomatis dilewati.</div></div>
+    <div class="field"><label>Tanggal stok awal (untuk material baru)</label>
+      <input type="date" name="tgl_stok_awal" value="{{ '2026-10-13' if not info.n else hari_ini }}" max="{{ hari_ini }}"></div>
+    <div class="field"><label class="req">Data SAP per (jam export dari SAP)</label>
+      <input type="datetime-local" name="sap_per" value="{{ now_local }}" max="{{ now_local }}" required>
+      <div class="hint">Transaksi yang ditandai "sudah posting SAP" setelah jam ini dianggap belum masuk file SAP ini.</div></div>
+    <div class="field" style="grid-column:1/-1">
+      <label class="check"><input type="checkbox" name="reset" value="1" {{ 'checked' if perlu_reset }} data-reset>
+        <b>Mulai baru — jadikan file ini stok awal semua material</b></label>
+      <div class="hint">Untuk awal pemakaian / setelah database dibersihkan. Stok aplikasi = stok di file ini + transaksi yang belum
+        diinput SAP. Kategori, stok minimum & penanda wajib tukar tetap tersimpan.</div>
+    </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" name="sinkron" value="1"> Koreksi selisih nyata otomatis</label>
+      <div class="hint">Biasanya <b>jangan dicentang</b>. Jika dicentang, material yang selisih nyata (bukan karena transaksi belum posting) disesuaikan ke stok SAP + transaksi belum posting. Lebih aman cek dulu di menu <a href="{{ url_for('main.selisih') }}">Selisih SAP</a>.</div>
+    </div>
+    <div class="field"><button class="btn primary">Upload & Proses</button></div>
+  </form>
+</div>
+
+<div class="card" id="supplementary">
+  <h2>Master Supplementary tujuan SAP</h2>
+  <p class="muted">{{ supplementary.n or 0 }} tujuan aktif: {{ supplementary.blok or 0 }} blok dan {{ supplementary.unit or 0 }} unit{% if supplementary.terakhir %} · diperbarui {{ supplementary.terakhir }}{% endif %}.</p>
+  <form method="post" action="{{ url_for('admin.supplementary_upload') }}" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label class="req">File Supplementary Plant Maintenance (.xlsx)</label>
+      <input type="file" name="file" accept=".xlsx,.xlsm" required>
+      <div class="hint">Membaca sheet BLOCK dan VRA ORDER. Kode lama otomatis dinonaktifkan bila file baru diunggah.</div></div>
+    <div class="field"><button class="btn primary">Upload Supplementary</button></div>
+  </form>
+</div>
+
+{% if grup %}
+<div class="card" id="minimum">
+  <h2>Stok minimum cepat</h2>
+  <form method="post" action="{{ url_for('admin.master_minimum') }}" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label>Awalan kode material</label>
+      <input name="awalan" placeholder="kosong = semua, mis. 952 atau 934.303" autocomplete="off">
+      <div class="hint">952 → hanya material berkode 952.xxx.xxx</div></div>
+    <div class="field"><label>Stok minimum</label><input name="nilai" inputmode="decimal" placeholder="mis. 5"></div>
+    <div class="field"><label class="check"><input type="checkbox" name="timpa" value="1"> Timpa yang sudah diisi</label>
+      <div class="hint">Tanpa centang: hanya material yang minimumnya masih 0.</div></div>
+    <div class="field actions">
+      <button class="btn primary" name="aksi" value="isi" data-confirm="Isi stok minimum untuk material sesuai awalan?">Terapkan minimum</button>
+      <button class="btn danger" name="aksi" value="reset" formnovalidate
+        data-confirm="Reset stok minimum menjadi 0 untuk material sesuai awalan (kosong = SEMUA material)?">Reset minimum</button>
+    </div>
+  </form>
+</div>
+
+<details class="card" id="grup">
+  <summary><b>Atur kategori cepat per Material Group</b> <small class="muted">({{ grup|length }} group)</small></summary>
+  <form method="post" action="{{ url_for('admin.master_grup') }}" style="margin-top:.75rem">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Material Group</th><th>Contoh material</th><th class="num">Jumlah</th><th class="num">Belum dikategorikan</th><th>Kategori sekarang</th><th>Terapkan kategori</th></tr></thead>
+      <tbody>
+      {% for gr in grup %}
+        <tr><td>{{ gr.material_group or '(kosong)' }}</td><td class="desc"><small>{{ gr.contoh }}</small></td><td class="num">{{ gr.n }}</td><td class="num">{{ gr.tanpa }}</td>
+          <td><small>{{ gr.kategori or '—' }}</small></td>
+          <td><select class="inline" name="grup_{{ gr.material_group }}"><option value="">—</option>
+            {% for k in kategori %}<option value="{{ k.id }}">{{ k.nama }}</option>{% endfor %}</select></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="actions" style="margin-top:.6rem;align-items:center">
+      <label class="check"><input type="checkbox" name="timpa" value="1"> Timpa kategori yang sudah diisi</label>
+      <button class="btn primary">Terapkan</button>
+    </div>
+  </form>
+</details>
+{% endif %}
+
+<form class="filters card" method="get">
+  <div class="grow"><label>Cari</label><input type="search" name="q" value="{{ request.args.q or '' }}" placeholder="kode / nama / material group"></div>
+  {% if kebun|length > 1 %}<div><label>Kebun</label><select name="kebun"><option value="">Semua</option>
+    {% for k in kebun %}<option value="{{ k.kode }}" {{ 'selected' if request.args.kebun == k.kode }}>{{ k.nama }}</option>{% endfor %}</select></div>{% endif %}
+  <div><label>Kategori</label><select name="kategori"><option value="">Semua</option>
+    {% for k in kategori %}<option value="{{ k.id }}" {{ 'selected' if request.args.kategori == k.id|string }}>{{ k.nama }}</option>{% endfor %}
+    <option value="none" {{ 'selected' if request.args.kategori == 'none' }}>Belum dikategorikan</option></select></div>
+  <button class="btn primary">Tampilkan</button>
+</form>
+
+<form method="post" action="{{ url_for('admin.master_atur') }}" id="formMaster">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <input type="hidden" name="kembali" value="{{ request.full_path }}">
+  <div class="tbl-wrap">
+  <table class="tbl">
+    <thead><tr><th><input type="checkbox" data-check-all="ids" aria-label="Pilih semua"></th><th>Material</th><th>Deskripsi</th><th>Group</th><th>Type</th>
+      <th>Plant/SLoc</th><th class="num">Stok awal</th><th class="num">Stok</th><th>Sat</th><th>Kategori</th><th class="num">Min</th><th title="Keluar wajib tukar barang lama">Tukar</th><th>Expired</th><th>Input</th></tr></thead>
+    <tbody>
+    {% for m in rows %}
+      <tr class="{{ 'wrn' if m.input_locked or m.expired or (m.expired_at and m.expired_at <= today()) }}" {% if not m.ada_di_sap %}title="Tidak ada di upload SAP terakhir"{% endif %}>
+        <td><input type="checkbox" name="ids" value="{{ m.id }}"></td>
+        <td class="nowrap"><a href="{{ url_for('main.kartu_stok', mid=m.id) }}">{{ m.material }}</a> {{ ui.sp_badge(m) }}{% if m.sap_unrestricted is none %} <span class="badge b-penyesuaian" title="Ditambahkan manual, belum ada di export SAP">baru, belum di SAP</span>{% elif not m.ada_di_sap %} <span class="badge">tidak di SAP</span>{% endif %}{% if m.expired or (m.expired_at and m.expired_at <= today()) %} <span class="badge b-keluar">EXPIRED</span>{% endif %}{% if m.input_locked %} <span class="badge b-penyesuaian">DIKUNCI</span>{% endif %}</td>
+        <td class="desc">{{ m.deskripsi }}</td>
+        <td>{{ m.material_group }}</td><td><small>{{ m.material_type }}</small></td>
+        <td><small>{{ m.plant }}/{{ m.storage_location }}</small></td>
+        <td class="num">{{ m.stok_awal|angka }}</td>
+        <td class="num">{{ m.stok|angka }}</td>
+        <td>{{ m.satuan }}</td>
+        <td><select class="inline" data-inline="kategori_id" data-id="{{ m.id }}" aria-label="Kategori">
+          <option value="none">—</option>
+          {% for k in kategori %}<option value="{{ k.id }}" {{ 'selected' if m.kategori_id == k.id }}>{{ k.nama }}</option>{% endfor %}</select></td>
+        <td class="num"><input class="inline" data-inline="stok_minimum" data-id="{{ m.id }}" value="{{ '%g'|format(m.stok_minimum) }}" inputmode="decimal" aria-label="Stok minimum"></td>
+        <td style="text-align:center"><input type="checkbox" data-inline="wajib_kembali" data-id="{{ m.id }}" {{ 'checked' if m.wajib_kembali }} aria-label="Wajib tukar barang lama" title="Keluar wajib tukar barang lama"></td>
+        <td><label class="check"><input type="checkbox" data-inline="expired" data-id="{{ m.id }}" {{ 'checked' if m.expired }} aria-label="Tandai expired"> Flag</label>
+          <input type="date" class="inline" data-inline="expired_at" data-id="{{ m.id }}" value="{{ m.expired_at or '' }}" aria-label="Tanggal expired" title="Otomatis diblokir saat tanggal tercapai"></td>
+        <td><label class="check" title="{{ m.input_lock_reason or 'Blokir kode ini dari input transaksi baru' }}"><input type="checkbox" data-inline="input_locked" data-id="{{ m.id }}" {{ 'checked' if m.input_locked }} aria-label="Kunci material dari input"> Kunci</label>
+          {% if m.input_lock_reason %}<br><small class="minus">{{ m.input_lock_reason }}</small>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="14" class="muted">Belum ada master. Upload file export SAP di atas.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {{ ui.pager(hal, total, per_hal) }}
+  <div class="card sticky-bar" style="margin-top:.75rem">
+    <div><label>Kategori untuk yang dicentang</label><select name="kategori_id"><option value="-">(tidak diubah)</option>
+      {% for k in kategori %}<option value="{{ k.id }}">{{ k.nama }}</option>{% endfor %}<option value="none">Kosongkan</option></select></div>
+    <div><label>Stok minimum untuk yang dicentang</label><input name="stok_minimum" inputmode="decimal" placeholder="(tidak diubah)"></div>
+    <div><label>Wajib tukar barang lama</label><select name="wajib_kembali"><option value="">(tidak diubah)</option>
+      <option value="1">Ya — wajib kembalikan barang lama</option><option value="0">Tidak</option></select></div>
+    <div><label>Status expired</label><select name="expired"><option value="">(tidak diubah)</option>
+      <option value="1">Ya — blokir transaksi</option><option value="0">Tidak — buka blokir</option></select></div>
+    <div><label>Kunci input material</label><select name="input_locked"><option value="">(tidak diubah)</option>
+      <option value="1">Ya — jangan boleh dipakai</option><option value="0">Tidak — buka kunci</option></select></div>
+    <div><label>Alasan kunci</label><input name="input_lock_reason" placeholder="mis. Gunakan kode FAME pengganti"></div>
+    <button class="btn primary">Terapkan ke yang dicentang</button>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}<script>initMaster();</script>{% endblock %}

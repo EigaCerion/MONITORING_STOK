@@ -1,0 +1,205 @@
+{% macro sel_pending(m) -%}
+{% if m.n_pending_rutin %}<a href="{{ url_for('main.transaksi', q=m.material, status='belum_posting') }}">{{ '+' if m.pending_rutin > 0 }}{{ m.pending_rutin|angka }}</a><br><small class="muted">{{ m.n_pending_rutin }} trx harian belum diinput SAP</small>{% else %}0{% endif %}
+{%- endmacro %}
+
+{% macro sel_fisik(m) -%}
+<a class="minus" href="{{ url_for('main.transaksi', q=m.material, jenis='penyesuaian', status='belum_posting') }}"><b>{{ '+' if m.selisih_fisik > 0 }}{{ m.selisih_fisik|angka }}</b></a><br><small class="muted">{{ m.n_selisih_fisik }} penyesuaian</small>
+{%- endmacro %}
+
+{# Angka SAP: perkiraan saat ini; tampilkan asal-usulnya bila ada input SAP setelah file diupload #}
+{% macro sel_sap(m) -%}
+{{ m.sap_perkiraan|angka }}{% if m.n_tunggu_upload %}<br><small title="File SAP per {{ m.sap_updated_at }} = {{ m.sap_unrestricted|angka }}; {{ m.n_tunggu_upload }} transaksi diinput ke SAP setelahnya">file {{ m.sap_unrestricted|angka }} {{ '+' if m.tunggu_sap > 0 }}{{ m.tunggu_sap|angka }} ✓</small>{% endif %}
+{%- endmacro %}
+
+{% macro jenis_badge(j) %}<span class="badge b-{{ j }}">{{ JENIS_LABEL[j] }}</span>{% endmacro %}
+
+{% macro status_sap(t) -%}
+{% if t.batal %}{% elif t.sumber == 'sinkron_sap' %}<span class="badge" title="Penyesuaian mengikuti SAP">sinkron</span>
+{% elif t.sap_posted %}<span class="badge b-masuk" title="{{ t.sap_posted_at }}{{ ' oleh ' ~ t.posting_oleh if t.posting_oleh }}">✓ SAP</span>{% if t.sap_doc %}<br><small>{{ t.sap_doc }}</small>{% endif %}
+{% if t.sap_movement_type or t.sap_posting_date %}<br><small>{{ 'MvT ' ~ t.sap_movement_type if t.sap_movement_type }}{{ ' · ' if t.sap_movement_type and t.sap_posting_date }}{{ t.sap_posting_date|tgl if t.sap_posting_date }}</small>{% endif %}
+{% else %}<span class="badge b-penyesuaian">belum</span>{% endif %}
+{%- endmacro %}
+
+{# Ringkasan barang lama yang dikembalikan untuk satu transaksi KELUAR #}
+{% macro info_kembali(t, km) -%}
+{% if t.jenis == 'keluar' and not t.batal %}
+  {% for p in km.get(t.id, []) %}<br><span class="badge {{ 'b-keluar' if 'Hilang' in p.kondisi else 'b-masuk' }}" title="{{ p.keterangan or '' }}">{{ ikon('pengembalian', 13) }} {{ p.qty|angka }} {{ p.kondisi }}</span>{% if p.foto %} <a class="icon-link" href="{{ url_for('main.foto', nama=p.foto) }}" target="_blank" aria-label="Lihat foto barang lama">{{ ikon('kamera', 16) }}</a>{% endif %}
+  {% else %}{% if t.wajib_kembali %}<br><span class="badge b-penyesuaian">{{ ikon('peringatan', 13) }} barang lama belum kembali</span>{% endif %}{% endfor %}
+{% endif %}
+{%- endmacro %}
+
+{% macro tombol_kembali(t) -%}
+<button type="button" class="btn sm" data-trx-dialog="dlgKembali" data-url="{{ url_for('main.catat_kembali', tid=t.id) }}"
+  data-info="#{{ t.id }}{{ ' · ' ~ t.bon if t.bon }} · keluar {{ t.qty|angka }} {{ t.satuan }} {{ t.deskripsi }}"
+  data-isi='{{ {"qty": t.qty, "oleh": t.penerima or ""} | tojson }}'>{{ ikon('pengembalian', 16) }}<span>Catat</span></button>
+{%- endmacro %}
+
+{% macro sp_badge(m) %}{% if m.special_stock %}<span class="badge b-q" title="Special stock {{ m.special_stock }} {{ m.special_stock_no }}">{{ m.special_stock }}{% if m.special_stock_no %} · {{ m.special_stock_no }}{% endif %}</span>{% endif %}{% endmacro %}
+
+{% macro tombol_ubah(m, label='Ubah Qty') -%}
+<button type="button" class="btn sm" data-adjust='{{ {"id": m.id, "material": m.material, "deskripsi": m.deskripsi,
+  "stok": m.stok, "satuan": m.satuan, "sap": m.sap_perkiraan, "pending": m.pending_sap or 0, "min": m.stok_minimum, "url": url_for("main.sesuaikan", mid=m.id)} | tojson }}'>{{ ikon('ubah', 16) }}<span>{{ label }}</span></button>
+{%- endmacro %}
+
+{# Dialog ubah qty manual (penyesuaian stok) #}
+{% macro dialog_ubah(alasan, hari_ini) %}
+<dialog id="dlgAdjust">
+  <form method="post" id="formAdjust">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="dlg-head">
+      <div><h2 class="m-0">Ubah Qty Stok</h2><small id="adjName"></small></div>
+      <button type="button" class="close" data-close aria-label="Tutup">{{ ikon('tutup', 22) }}</button>
+    </div>
+    <div class="compare">
+      <div><span>Stok aplikasi</span><b id="adjNow">0</b></div>
+      <div><span>Stok SAP</span><b id="adjSap">–</b></div>
+      <div><span>Selisih baru</span><b id="adjDiff">0</b></div>
+    </div>
+    <div class="field">
+      <label class="req" for="adjQty">Qty sebenarnya (fisik) <span id="adjUnit"></span></label>
+      <input id="adjQty" name="qty_baru" inputmode="decimal" autocomplete="off" required class="qty-big">
+      <div class="actions mt-sm">
+        <button type="button" class="btn sm" id="adjUseSap">{{ ikon('selisih', 16) }}<span>Samakan dengan SAP</span></button>
+      </div>
+      <div class="hint" id="adjSapHint"></div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label class="req" for="adjAlasan">Alasan</label>
+        <select id="adjAlasan" name="alasan" required>
+          {% for a in alasan %}<option>{{ a }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="adjTgl">Tanggal</label>
+        <input type="date" id="adjTgl" name="tanggal" value="{{ hari_ini }}" max="{{ hari_ini }}">
+      </div>
+    </div>
+    <div class="field">
+      <label for="adjKet">Keterangan</label>
+      <input id="adjKet" name="keterangan" placeholder="mis. hasil hitung fisik gudang 14/10">
+    </div>
+    <p class="hint">Perubahan dicatat sebagai transaksi PENYESUAIAN sebesar selisihnya, lengkap dengan nama & waktu, jadi riwayat stok tetap utuh.</p>
+    <div class="actions justify-end">
+      <button type="button" class="btn" data-close>Batal</button>
+      <button type="submit" class="btn primary">{{ ikon('simpan', 18) }}<span>Simpan</span></button>
+    </div>
+  </form>
+</dialog>
+{% endmacro %}
+
+{# Dialog koreksi qty & batal transaksi #}
+{% macro dialog_transaksi(kembali) %}
+<dialog id="dlgKoreksi">
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="kembali" value="{{ kembali }}">
+    <div class="dlg-head"><div><h2 class="m-0">Koreksi Qty Transaksi</h2><small data-info></small></div>
+      <button type="button" class="close" data-close aria-label="Tutup">{{ ikon('tutup', 22) }}</button></div>
+    <div class="field"><label class="req">Qty yang benar</label><input name="qty" inputmode="decimal" required class="qty-big"></div>
+    <div class="field"><label class="req">Alasan koreksi</label><input name="alasan" required placeholder="mis. salah ketik, seharusnya 5"></div>
+    <div class="actions justify-end"><button type="button" class="btn" data-close>Batal</button>
+      <button class="btn primary">{{ ikon('simpan', 18) }}<span>Simpan Koreksi</span></button></div>
+  </form>
+</dialog>
+<dialog id="dlgBatal">
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="kembali" value="{{ kembali }}">
+    <div class="dlg-head"><div><h2 class="m-0">Batalkan Transaksi</h2><small data-info></small></div>
+      <button type="button" class="close" data-close aria-label="Tutup">{{ ikon('tutup', 22) }}</button></div>
+    <p class="hint">Transaksi tidak dihapus, hanya ditandai batal sehingga tidak dihitung ke stok.</p>
+    <div class="field"><label class="req">Alasan pembatalan</label><input name="alasan" required placeholder="mis. input dobel"></div>
+    <div class="actions justify-end"><button type="button" class="btn" data-close>Tutup</button>
+      <button class="btn danger">{{ ikon('tutup', 18) }}<span>Batalkan Transaksi</span></button></div>
+  </form>
+</dialog>
+<dialog id="dlgEdit">
+  <form method="post">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="kembali" value="{{ kembali }}">
+    <div class="dlg-head"><div><h2 class="m-0">Edit Keterangan Transaksi</h2><small data-info></small></div>
+      <button type="button" class="close" data-close aria-label="Tutup">{{ ikon('tutup', 22) }}</button></div>
+    <div class="field"><label>Keterangan</label><input name="keterangan" autocomplete="off"></div>
+    <div class="field"><label>Nama penerima</label><input name="penerima" autocomplete="off"></div>
+    <div class="field"><label>Nomor dokumen</label><input name="nomor_dokumen" autocomplete="off"></div>
+    <div class="field" data-hanya-bon hidden>
+      <label class="check"><input type="checkbox" name="semua_bon" value="1" checked> Terapkan ke semua barang di bon <b data-bon></b></label>
+    </div>
+    <p class="hint">Qty tidak diubah di sini (pakai tombol Koreksi). Perubahan tercatat di Log.</p>
+    <div class="actions justify-end"><button type="button" class="btn" data-close>Batal</button>
+      <button class="btn primary">{{ ikon('simpan', 18) }}<span>Simpan</span></button></div>
+  </form>
+</dialog>
+<dialog id="dlgKembali">
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="kembali" value="{{ kembali }}">
+    <div class="dlg-head"><div><h2 class="m-0">{{ ikon('pengembalian', 20) }} Pengembalian Barang Lama</h2><small data-info></small></div>
+      <button type="button" class="close" data-close aria-label="Tutup">{{ ikon('tutup', 22) }}</button></div>
+    <div class="row">
+      <div class="field"><label class="req">Qty barang lama</label><input name="qty" inputmode="decimal" autocomplete="off"></div>
+      <div class="field"><label class="req">Kondisi</label><select name="kondisi" required><option value="">— pilih —</option>
+        {% for k in (kondisi or []) %}<option>{{ k }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Dikembalikan oleh</label><input name="oleh" autocomplete="off"></div>
+      <div class="field"><label>Tanggal</label><input type="date" name="tanggal" value="{{ today() }}" max="{{ today() }}"></div>
+    </div>
+    <div class="field"><label>Keterangan</label><input name="keterangan" placeholder="mis. gagang patah"></div>
+    <div class="field"><label data-lbl-foto-lama>Foto barang lama</label><input type="file" name="foto" accept="image/*" data-compress
+      data-kamera="Foto barang lama" data-tombol="Pilih dari galeri">
+      <div class="hint">Wajib bila ada barang lama yang diserahkan.</div></div>
+    <p class="hint">Tidak mengubah stok — hanya bukti tukar barang, dilampirkan ke bon.</p>
+    <div class="actions justify-end"><button type="button" class="btn" data-close>Batal</button>
+      <button class="btn primary">{{ ikon('simpan', 18) }}<span>Simpan</span></button></div>
+  </form>
+</dialog>
+<dialog id="dlgFoto">
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="kembali" value="{{ kembali }}">
+    <input type="hidden" name="slot" value="1">
+    <div class="dlg-head"><div><h2 class="m-0">Lampirkan Foto Transaksi</h2><small data-info></small></div>
+      <button type="button" class="close" data-close aria-label="Tutup">{{ ikon('tutup', 22) }}</button></div>
+    <div class="field"><input type="file" name="foto" accept="image/*" required data-compress
+      data-kamera="Ambil foto langsung" data-tombol="Pilih dari galeri"></div>
+    <div class="actions justify-end"><button type="button" class="btn" data-close>Tutup</button>
+      <button class="btn primary">{{ ikon('kamera', 18) }}<span>Upload</span></button></div>
+  </form>
+</dialog>
+{% endmacro %}
+
+{% macro aksi_transaksi(t, user) -%}
+{% if not t.batal %}
+  {% if user.role in ('admin','petugas') and t.jenis == 'keluar' and t.wajib_kembali %}{{ tombol_kembali(t) }}{% endif %}
+  {% if user.role in ('admin','petugas') and t.jenis in ('keluar','transfer_keluar') and not t.foto %}
+    <button type="button" class="btn sm" data-trx-dialog="dlgFoto" data-url="{{ url_for('main.foto_transaksi', tid=t.id) }}"
+      data-info="#{{ t.id }} · foto 1 orang/penerima" data-isi='{{ {"slot": "1"} | tojson }}'>{{ ikon('kamera', 16) }}<span>Foto 1</span></button>
+  {% endif %}
+  {% if user.role in ('admin','petugas') and not t.foto_2 %}
+    <button type="button" class="btn sm" data-trx-dialog="dlgFoto" data-url="{{ url_for('main.foto_transaksi', tid=t.id) }}"
+      data-info="#{{ t.id }} · foto 2 bon/dokumen (opsional)" data-isi='{{ {"slot": "2"} | tojson }}'>{{ ikon('kamera', 16) }}<span>Foto 2</span></button>
+  {% endif %}
+  {% if user.role == 'admin' %}
+    <button type="button" class="btn sm" data-trx-dialog="dlgEdit" data-url="{{ url_for('main.edit_transaksi', tid=t.id) }}"
+      data-info="#{{ t.id }} · {{ JENIS_LABEL[t.jenis] }} {{ t.qty|angka }}" data-bon="{{ t.bon or '' }}"
+      data-isi='{{ {"keterangan": t.keterangan or "", "penerima": t.penerima or "", "nomor_dokumen": t.nomor_dokumen or ""} | tojson }}'>{{ ikon('ubah', 16) }}<span>Edit</span></button>
+    <button type="button" class="btn sm" data-trx-dialog="dlgKoreksi" data-url="{{ url_for('main.koreksi_transaksi', tid=t.id) }}" data-qty="{{ t.qty }}" data-info="#{{ t.id }} · {{ JENIS_LABEL[t.jenis] }} {{ t.qty|angka }}{{ ' · SUDAH ✓ SAP: koreksi juga di SAP' if t.sap_posted and t.sumber != 'sinkron_sap' }}">{{ ikon('selisih', 16) }}<span>Koreksi</span></button>
+    <button type="button" class="btn sm" data-trx-dialog="dlgBatal" data-url="{{ url_for('main.batal_transaksi', tid=t.id) }}" data-info="#{{ t.id }} · {{ JENIS_LABEL[t.jenis] }} {{ t.qty|angka }}{{ ' · SUDAH ✓ SAP: reverse juga di SAP' if t.sap_posted and t.sumber != 'sinkron_sap' }}">{{ ikon('tutup', 16) }}<span>Batal</span></button>
+  {% endif %}
+{% endif %}
+{%- endmacro %}
+
+{% macro pager(hal, total, per_hal) %}
+{% if total > per_hal %}
+{% set args = request.args.to_dict() %}
+<div class="pager">
+  {% if hal > 1 %}{% set _ = args.update(hal=hal-1) %}<a class="btn sm" href="?{{ args|urlencode }}">‹ Sebelumnya</a>{% endif %}
+  <small>Hal {{ hal }} dari {{ ((total - 1) // per_hal) + 1 }}</small>
+  {% if hal * per_hal < total %}{% set _ = args.update(hal=hal+1) %}<a class="btn sm" href="?{{ args|urlencode }}">Berikutnya ›</a>{% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+{% from "_ikon.html" import ikon %}
+

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Tambah Material Baru{% endblock %}
+{% block content %}
+<div class="hp">
+  <small><a href="{{ url_for('admin.master') }}">← Master SAP</a></small>
+  <h1>Tambah Material Baru</h1>
+  <p class="muted">Untuk barang yang <b>belum ada di export SAP</b>, misalnya pertama kali dipesan untuk kebun ini. Stok mulai dari 0, lalu catat penerimaannya sebagai MASUK.</p>
+  <div class="flash warn">Kalau penerimaan barangnya <b>sudah diposting di SAP</b> (GR), cukup upload export SAP terbaru di Master SAP. Material baru otomatis masuk beserta stoknya, jadi <b>jangan</b> diinput MASUK lagi.</div>
+
+  <form method="post" class="card">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label class="req">Kebun (plant)</label>
+      <select name="plant" required>
+        {% for k in kebun %}<option value="{{ k.kode }}" {{ 'selected' if (f.get('plant') or plant_default) == k.kode }}>{{ k.nama }} ({{ k.kode }})</option>{% endfor %}
+      </select></div>
+    <div class="field"><label class="req">Kode material SAP</label>
+      <input name="material" value="{{ f.get('material', '') }}" required autocapitalize="characters" placeholder="mis. 904.001.002">
+      <div class="hint">Isi persis sama dengan kode di SAP, supaya saat export SAP berikutnya otomatis tersambung. Kalau kode belum ada, tanyakan ke bagian SAP/pembelian dulu.</div></div>
+    <div class="field"><label class="req">Deskripsi</label>
+      <input name="deskripsi" value="{{ f.get('deskripsi', '') }}" required autocapitalize="characters"></div>
+    <div class="row">
+      <div class="field"><label class="req">Satuan</label>
+        <input name="satuan" value="{{ f.get('satuan', '') }}" required autocapitalize="characters" placeholder="PC / L / KG"></div>
+      <div class="field"><label>Material group</label>
+        <input name="material_group" value="{{ f.get('material_group', '') }}" placeholder="mis. 904"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Kategori</label>
+        <select name="kategori_id"><option value="">—</option>
+          {% for k in kategori %}<option value="{{ k.id }}" {{ 'selected' if f.get('kategori_id') == k.id|string }}>{{ k.nama }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Stok minimum</label>
+        <input name="stok_minimum" value="{{ f.get('stok_minimum', '') }}" inputmode="decimal" placeholder="0"></div>
+    </div>
+    <div class="field"><label class="check"><input type="checkbox" name="wajib_kembali" value="1" {{ 'checked' if f.get('wajib_kembali') }}>
+      Keluar wajib tukar barang lama (egrek, tabung gas, sepatu, dll.)</label></div>
+    <div class="row">
+      <div class="field"><label class="check"><input type="checkbox" name="expired" value="1" {{ 'checked' if f.get('expired') }}>
+        Tandai EXPIRED dan blokir transaksi</label></div>
+      <div class="field"><label>Tanggal expired (opsional)</label><input type="date" name="expired_at" value="{{ f.get('expired_at', '') }}">
+        <div class="hint">Material otomatis diblokir saat tanggal ini tercapai.</div></div>
+    </div>
+    <details>
+      <summary class="muted">Special stock (jika ada)</summary>
+      <div class="row" style="margin-top:.5rem">
+        <div class="field"><label>Special Stock</label><input name="special_stock" value="{{ f.get('special_stock', '') }}" placeholder="mis. Q"></div>
+        <div class="field"><label>Special stock number</label><input name="special_stock_no" value="{{ f.get('special_stock_no', '') }}"></div>
+      </div>
+    </details>
+    <button class="btn primary block" style="margin-top:.75rem">Simpan & lanjut input MASUK</button>
+  </form>
+</div>
+{% endblock %}

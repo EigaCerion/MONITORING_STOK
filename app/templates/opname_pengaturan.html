@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Pengaturan Laporan Opname{% endblock %}
+{% block content %}
+<div class="hp">
+  <h1>Kop & Tanda Tangan Berita Acara</h1>
+  <p class="muted">Dipakai di export Excel Berita Acara Perhitungan Fisik Persediaan.</p>
+  <form method="post" class="card">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label>Nama perusahaan</label><input name="nama_perusahaan" value="{{ st.nama_perusahaan }}"></div>
+    <div class="row">
+      <div class="field"><label>Unit operasional</label><input name="unit_operasional" value="{{ st.unit_operasional }}"></div>
+      <div class="field"><label>Lokasi (default)</label><input name="lokasi" value="{{ st.lokasi }}"></div>
+    </div>
+    {% for k, judul in [('dibuat','Dibuat oleh'),('diperiksa','Diperiksa oleh'),('disetujui','Disetujui oleh')] %}
+    <h3 style="margin-top:.5rem">{{ judul }}</h3>
+    <div class="row">
+      <div class="field"><label>Nama</label><input name="{{ k }}_nama" value="{{ st[k ~ '_nama'] }}"></div>
+      <div class="field"><label>Jabatan</label><input name="{{ k }}_jabatan" value="{{ st[k ~ '_jabatan'] }}"></div>
+    </div>
+    {% endfor %}
+    <button class="btn primary block">Simpan</button>
+  </form>
+</div>
+{% endblock %}

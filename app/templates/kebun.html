@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Kebun{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Daftar Kebun</h1>
+  <p class="muted">Dipakai untuk pilihan Kebun Asal / Tujuan transfer. Kebun dari master SAP (Plant) ditambahkan otomatis.</p></div></div>
+<div class="card">
+  <h2>Tambah kebun</h2>
+  <form method="post" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label class="req">Kode</label><input name="kode" required maxlength="30" placeholder="mis. CM3A"></div>
+    <div class="field"><label class="req">Nama</label><input name="nama" required placeholder="mis. KEBUN CMA 1 INTI"></div>
+    <div class="field"><button class="btn primary">Tambah</button></div>
+  </form>
+</div>
+<div class="tbl-wrap">
+<table class="tbl">
+  <thead><tr><th>Kode</th><th>Nama</th><th class="num">Material</th><th>Aktif</th><th></th></tr></thead>
+  <tbody>
+  {% for k in rows %}
+    <tr>
+        <td><form method="post" id="fk{{ loop.index }}"><input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="edit" value="1"><input type="hidden" name="kode" value="{{ k.kode }}"></form><b>{{ k.kode }}</b></td>
+        <td><input form="fk{{ loop.index }}" name="nama" value="{{ k.nama }}" required></td>
+        <td class="num">{{ k.material }}</td>
+        <td><select form="fk{{ loop.index }}" name="aktif" class="inline"><option value="1" {{ 'selected' if k.aktif }}>Aktif</option><option value="0" {{ 'selected' if not k.aktif }}>Nonaktif</option></select></td>
+        <td><button form="fk{{ loop.index }}" class="btn sm">Simpan</button></td>
+    </tr>
+  {% else %}<tr><td colspan="5" class="muted">Belum ada kebun.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

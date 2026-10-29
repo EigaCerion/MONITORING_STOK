@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% block title %}Import Transaksi Excel{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Import Transaksi dari Excel</h1>
+    <p class="muted">Untuk MASUK, TRANSFER_MASUK, dan TRANSFER_KELUAR. Transaksi KELUAR wajib lewat input HP (foto bukti).</p></div>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('admin.unduh_template', nama='TEMPLATE_TRANSAKSI_MASUK_TRANSFER.xlsx') }}">Unduh template</a>
+    <a class="btn" href="{{ url_for('admin.unduh_template', nama='REFERENSI_JENIS_TRANSAKSI.xlsx') }}">Referensi jenis</a>
+  </div>
+</div>
+
+<div class="card">
+  <form method="post" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label class="req">Kebun pemilik stok</label>
+      <select name="plant" required>
+        {% for k in kebun %}<option value="{{ k.kode }}" {{ 'selected' if plant == k.kode }}>{{ k.nama }} ({{ k.kode }})</option>{% else %}<option value="">Upload master SAP dulu</option>{% endfor %}
+      </select></div>
+    <div class="field"><label class="req">File Excel (.xlsx)</label><input type="file" name="file" accept=".xlsx,.xlsm" required></div>
+    <div class="field"><label class="check"><input type="checkbox" name="auto_kebun" value="1"> Tambah otomatis kebun asal/tujuan yang belum terdaftar</label></div>
+    <div class="field"><button class="btn primary">Periksa File</button></div>
+  </form>
+  <p class="hint">File diperiksa dulu (pratinjau). Data baru disimpan setelah Anda menekan <b>Simpan</b> dan tidak ada baris error. Nomor dokumen yang sudah pernah diinput untuk material yang sama akan ditolak agar tidak dobel.</p>
+</div>
+
+{% if rows %}
+<div class="card">
+  <div class="section-title">
+    <h2>Pratinjau: {{ nama_file }} — {{ rows|length }} baris{% if n_err %}, <span class="minus">{{ n_err }} error</span>{% endif %}</h2>
+    {% if not n_err %}
+    <form method="post" action="{{ url_for('admin.import_konfirmasi') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="token" value="{{ token }}">
+      <button class="btn primary">Simpan {{ rows|length }} transaksi</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if kebun_baru %}<div class="flash warn">Kebun baru yang akan ditambahkan: {{ kebun_baru.values()|join(', ') }}</div>{% endif %}
+  {% if n_err %}<div class="flash error">Perbaiki baris yang error di file Excel lalu upload ulang. Tidak ada data yang disimpan.</div>{% endif %}
+  <div class="tbl-wrap">
+  <table class="tbl">
+    <thead><tr><th>Baris</th><th>Tanggal</th><th>Jenis</th><th>Material</th><th class="num">Qty</th><th>Dokumen</th><th>Kebun</th><th class="num">Stok sesudah</th><th>Catatan</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr class="{{ 'err' if r.errors else ('wrn' if r.warnings) }}">
+        <td>{{ r._baris }}</td>
+        <td class="nowrap">{{ r.tanggal|tgl if r.tanggal else r.tanggal_raw }}</td>
+        <td>{% if r.jenis %}{{ ui.jenis_badge(r.jenis) }}{% else %}{{ r.jenis_raw }}{% endif %}</td>
+        <td class="desc">{{ r.material }}{% if r.deskripsi %}<br><small>{{ r.deskripsi }}</small>{% endif %}</td>
+        <td class="num">{{ r.qty|angka if r.qty is not none else r.qty_raw }} {{ r.satuan_master or r.satuan }}</td>
+        <td>{{ r.nomor_dokumen }}</td>
+        <td><small>{% if r.jenis == 'transfer_keluar' %}→ {{ r.kebun_tujuan_raw }}{% elif r.jenis == 'transfer_masuk' %}← {{ r.kebun_asal_raw }}{% endif %}</small></td>
+        <td class="num">{{ r.stok_sesudah|angka if r.stok_sesudah is defined }}</td>
+        <td><small>{% for e in r.errors %}<div class="minus">✗ {{ e }}</div>{% endfor %}{% for w in r.warnings %}<div>! {{ w }}</div>{% endfor %}</small></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

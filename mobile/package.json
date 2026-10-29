@@ -1,0 +1,22 @@
+{
+  "name": "monitoring-stok-mobile",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "android:sync": "npm run build && cap sync android",
+    "android:debug": "powershell -ExecutionPolicy Bypass -File scripts/build-android.ps1 -ModeDebug",
+    "android:release": "powershell -ExecutionPolicy Bypass -File scripts/build-android.ps1"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
+    "vite": "^5.4.11"
+  }
+}

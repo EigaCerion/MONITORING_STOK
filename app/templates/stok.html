@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Stok{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Stok Material</h1><p class="muted">{{ total|angka }} material{% if user.role == 'admin' %} · klik <b>Ubah Qty</b> untuk menyesuaikan stok bila beda dengan fisik / SAP{% endif %}</p></div>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('main.export_stok', **request.args) }}">{{ ikon('unduh', 18) }}<span>Export Excel</span></a>
+    {% if user.role == 'admin' %}<a class="btn" href="{{ url_for('main.opname', **request.args) }}">{{ ikon('opname', 18) }}<span>Stock opname massal</span></a>{% endif %}
+  </div>
+</div>
+
+<form class="filters card" method="get" data-filter>
+  <div class="grow"><label>Cari</label><input type="search" name="q" value="{{ request.args.q or '' }}" placeholder="kode / nama / material group"></div>
+  {% if not user.kebun_kode and kebun|length > 1 %}
+  <div><label>Kebun</label><select name="kebun"><option value="">Semua</option>
+    {% for k in kebun %}<option value="{{ k.kode }}" {{ 'selected' if request.args.kebun == k.kode }}>{{ k.nama }}</option>{% endfor %}</select></div>
+  {% endif %}
+  <div><label>Kategori</label><select name="kategori"><option value="">Semua</option>
+    {% for k in kategori %}<option value="{{ k.id }}" {{ 'selected' if request.args.kategori == k.id|string }}>{{ k.nama }}</option>{% endfor %}
+    <option value="none" {{ 'selected' if request.args.kategori == 'none' }}>Belum dikategorikan</option></select></div>
+  <div><label>Status</label><select name="status"><option value="">Semua</option>
+    {% for v, l in [('menipis','Menipis'),('habis','Habis / minus'),('expired','Expired — transaksi diblokir'),('locked','Kode dikunci dari input'),('selisih','Selisih dengan SAP (perlu tindakan)')] %}
+    <option value="{{ v }}" {{ 'selected' if request.args.status == v }}>{{ l }}</option>{% endfor %}</select></div>
+  <button class="btn primary">{{ ikon('filter', 18) }}<span>Tampilkan</span></button>
+</form>
+
+<div class="tbl-wrap">
+<table class="tbl tbl-cards kartu-stok-list">
+  <thead><tr>
+    <th>Material</th><th>Deskripsi</th><th>Kategori</th><th class="num">Stok</th><th>Sat</th>
+    <th class="num">Min</th><th class="num">SAP</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for m in rows %}
+    {% set beda = (m.selisih_nyata is not none and (m.selisih_nyata|abs) > 0.0005) or m.n_selisih_fisik %}
+    <tr class="{{ 'wrn' if m.input_locked or m.expired or (m.expired_at and m.expired_at <= today()) }}">
+      <td class="nowrap c-kode"><a href="{{ url_for('main.kartu_stok', mid=m.id) }}">{{ m.material }}</a> {{ ui.sp_badge(m) }}{% if m.expired or (m.expired_at and m.expired_at <= today()) %} <span class="badge b-keluar">EXPIRED</span>{% endif %}{% if m.input_locked %} <span class="badge b-penyesuaian">DIKUNCI</span>{% endif %}</td>
+      <td class="desc c-mat"><a class="link-teks" href="{{ url_for('main.kartu_stok', mid=m.id) }}">{{ m.deskripsi }}</a>{% if m.expired_at %}<br><small class="minus">Expired {{ m.expired_at|tgl }}</small>{% endif %}{% if m.input_locked %}<br><small class="minus">{{ m.input_lock_reason or 'Kode material tidak boleh dipakai untuk input baru' }}</small>{% endif %}{% if kebun|length > 1 %}<br><small>{{ m.kebun_nama }}</small>{% endif %}</td>
+      <td class="c-kat"><small>{{ m.kategori or '' }}</small></td>
+      <td class="num c-stok {{ 'low' if (m.stok <= 0) or (m.stok_minimum > 0 and m.stok <= m.stok_minimum) }}" data-stok-for="{{ m.id }}">{{ m.stok|angka }}</td>
+      <td class="c-sat">{{ m.satuan }}</td>
+      <td class="num c-min" data-label="Min">{% if m.stok_minimum %}<small>{{ m.stok_minimum|angka }}</small>{% endif %}</td>
+      <td class="num c-sap" data-label="SAP">{% if m.sap_unrestricted is not none %}<span class="{{ 'low' if beda }}" title="{{ 'Selisih nyata ' ~ (m.selisih_nyata|angka) if beda }}">{{ ui.sel_sap(m) }}</span>{% if m.n_selisih_fisik %}<br><small class="minus" title="Ubah Qty / opname belum disesuaikan di SAP"><b>{{ '+' if m.selisih_fisik > 0 }}{{ m.selisih_fisik|angka }} selisih fisik</b>, belum di SAP</small>{% endif %}{% if m.n_pending_rutin %}<br><small class="muted" title="Transaksi harian belum ditandai ✓ SAP">{{ '+' if m.pending_rutin > 0 }}{{ m.pending_rutin|angka }} trx belum diinput SAP</small>{% endif %}{% endif %}</td>
+      <td class="nowrap c-aksi">
+        {% if user.role == 'admin' %}{{ ui.tombol_ubah(m) }}{% endif %}
+        <a class="btn sm btn-riwayat" href="{{ url_for('main.kartu_stok', mid=m.id) }}">Riwayat</a>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">Tidak ada data.{% if user.role == 'admin' %} Upload master SAP di menu <a href="{{ url_for('admin.master') }}">Master SAP</a>.{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{{ ui.pager(hal, total, per_hal) }}
+{% if user.role == 'admin' %}{{ ui.dialog_ubah(alasan, hari_ini) }}{% endif %}
+{% endblock %}

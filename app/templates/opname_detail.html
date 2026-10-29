@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Opname {{ sesi.jenis_barang }} {{ sesi.tanggal|tgl }}{% endblock %}
+{% block content %}
+{% set n_selisih = items|selectattr('lebih')|list|length + items|selectattr('kurang')|list|length %}
+<div class="page-head">
+  <div><small><a href="{{ url_for('opname.riwayat') }}">← Riwayat opname</a></small>
+    <h1>Stock Opname {{ sesi.jenis_barang }}</h1>
+    <p class="muted">{{ sesi.tanggal|tgl }} · Lokasi {{ sesi.lokasi or '-' }} · {{ items|length }} material dihitung · {{ n_selisih }} selisih · dibuka oleh {{ sesi.oleh }}{% if sesi.ditutup_oleh %} · ditutup oleh {{ sesi.ditutup_oleh }}{% endif %}{% if sesi.keterangan %} · {{ sesi.keterangan }}{% endif %}</p></div>
+  <div class="actions">
+    {% if sesi.status == 'terbuka' %}<a class="btn primary" href="{{ url_for('opname.hitung', sid=sesi.id) }}">Lanjut menghitung</a>
+    {% else %}<a class="btn primary" href="{{ url_for('opname.export', sesi=sesi.id) }}">Export Berita Acara (Excel)</a>{% endif %}
+    {% if user.role == 'admin' %}<form method="post" action="{{ url_for('opname.batal', sid=sesi.id) }}"
+      data-confirm="Batalkan sesi opname ini? Semua penyesuaian stok dari sesi ini dibatalkan dan sesi dihapus dari riwayat.">
+      <input type="hidden" name="_csrf" value="{{ csrf }}"><button class="btn danger">Batalkan sesi opname</button></form>{% endif %}
+    {% if sesi.status != 'terbuka' %}<a class="btn" href="{{ url_for('opname.export', tanggal=sesi.tanggal) }}">Export semua jenis {{ sesi.tanggal|tgl }}</a>{% endif %}
+  </div>
+</div>
+{% if sesi.status == 'terbuka' %}<div class="flash warn"><b>Sesi masih terbuka.</b> Hitungan belum mengubah stok aplikasi dan transaksi gudang masih dikunci.</div>{% endif %}
+{% if n_selisih %}
+<div class="flash warn">Penyesuaian dari opname ini perlu diinput juga ke SAP. Setelah diinput, tandai ✓ SAP di menu
+  <a href="{{ url_for('main.transaksi', jenis='penyesuaian', status='belum_posting') }}">Transaksi</a>; status di Berita Acara ikut berubah.</div>
+{% endif %}
+<div class="tbl-wrap">
+<table class="tbl tbl-cards kartu-opname-detail">
+  <thead><tr><th>No</th><th>Kode</th><th>Nama barang</th><th>Uom</th><th class="num">Kartu stock</th><th class="num">Fisik</th>
+    <th class="num">Lebih</th><th class="num">Kurang</th><th class="num">SAP saat opname</th><th>Keterangan / petugas</th></tr></thead>
+  <tbody>
+  {% for it in items %}
+    <tr>
+      <td class="c-no">{{ loop.index }}</td>
+      <td class="nowrap c-kode"><a href="{{ url_for('main.kartu_stok', mid=it.material_id) }}">{{ it.material }}</a></td>
+      <td class="desc c-mat">{{ it.deskripsi }}</td>
+      <td class="c-sat">{{ it.satuan }}</td>
+      <td class="num" data-label="Kartu">{{ it.stok_buku|angka }}</td>
+      <td class="num c-fisik" data-label="Fisik"><b>{{ it.fisik|angka }}</b></td>
+      <td class="num minus" data-label="Lebih">{{ it.lebih|angka if it.lebih }}</td>
+      <td class="num plus" data-label="Kurang">{{ it.kurang|angka if it.kurang }}</td>
+      <td class="num" data-label="SAP"><small>{{ it.stok_sap|angka if it.stok_sap is not none }}</small></td>
+      <td class="c-ket"><small>{{ it.keterangan or '' }}
+        {% if it.dihitung_oleh %}<br>oleh <b>{{ it.dihitung_oleh }}</b> · {{ it.counted_at or '' }}{% endif %}
+        {% if it.trx_id %}{% if it.trx_batal %}<span class="badge">penyesuaian dibatalkan</span>
+        {% elif it.trx_sap_posted %}<span class="badge b-masuk">✓ SAP{{ ' ' ~ it.trx_sap_doc if it.trx_sap_doc }}</span>
+        {% else %}<span class="badge b-penyesuaian">belum di SAP</span>{% endif %}{% endif %}</small></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="hint">Lebih = kartu stock lebih banyak dari fisik (barang kurang di gudang). Kurang = kartu stock lebih sedikit dari fisik. Sama seperti format Berita Acara sebelumnya.</p>
+{% endblock %}
+{% block scripts %}<script>opnameTersimpan();</script>{% endblock %}

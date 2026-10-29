@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Pengguna{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Pengguna</h1>
+  <p class="muted"><b>Admin</b>: semua menu termasuk ubah qty/koreksi. <b>Petugas Gudang</b>: input transaksi lewat HP & lihat stok. <b>Pimpinan</b>: lihat stok, selisih & laporan.</p></div></div>
+<div class="card">
+  <h2>Tambah pengguna</h2>
+  <form method="post" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label class="req">Username</label><input name="username" required autocapitalize="none" pattern="[a-zA-Z0-9._\-]{3,30}"></div>
+    <div class="field"><label class="req">Nama</label><input name="nama" required></div>
+    <div class="field"><label class="req">Password</label><input name="password" type="password" required minlength="6" autocomplete="new-password"></div>
+    <div class="field"><label>Peran</label><select name="role">{% for k, v in ROLE_LABEL.items() %}<option value="{{ k }}" {{ 'selected' if k == 'petugas' }}>{{ v }}</option>{% endfor %}</select></div>
+    <div class="field"><label>Kebun</label><select name="kebun_kode"><option value="">Semua kebun</option>
+      {% for k in kebun %}<option value="{{ k.kode }}">{{ k.nama }}</option>{% endfor %}</select></div>
+    <div class="field"><button class="btn primary">Tambah</button></div>
+  </form>
+</div>
+<div class="tbl-wrap">
+<table class="tbl">
+  <thead><tr><th>Username</th><th>Nama</th><th>Peran</th><th>Kebun</th><th>Status</th><th>Password baru</th><th></th></tr></thead>
+  <tbody>
+  {% for u in rows %}
+    <tr>
+        <td><form method="post" id="fu{{ loop.index }}"><input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ u.id }}"></form><b>{{ u.username }}</b></td>
+        <td><input form="fu{{ loop.index }}" name="nama" value="{{ u.nama }}" required></td>
+        <td><select form="fu{{ loop.index }}" name="role" class="inline">{% for k, v in ROLE_LABEL.items() %}<option value="{{ k }}" {{ 'selected' if u.role == k }}>{{ v }}</option>{% endfor %}</select></td>
+        <td><select form="fu{{ loop.index }}" name="kebun_kode" class="inline"><option value="">Semua</option>{% for k in kebun %}<option value="{{ k.kode }}" {{ 'selected' if u.kebun_kode == k.kode }}>{{ k.nama }}</option>{% endfor %}</select></td>
+        <td><select form="fu{{ loop.index }}" name="aktif" class="inline"><option value="1" {{ 'selected' if u.aktif }}>Aktif</option><option value="0" {{ 'selected' if not u.aktif }}>Nonaktif</option></select></td>
+        <td><input form="fu{{ loop.index }}" name="password" type="password" placeholder="(tidak diubah)" autocomplete="new-password" style="min-width:130px"></td>
+        <td><button form="fu{{ loop.index }}" class="btn sm">Simpan</button></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1f6e43">
+  <meta name="csrf" content="{{ csrf }}">
+  <title>{% block title %}Monitoring Stok{% endblock %} · Monitoring Stok</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+{% from "_ikon.html" import ikon %}
+<body class="{{ 'ada-tabbar' if user }}">
+{% if user %}
+{% set ep = request.endpoint or '' %}
+<header class="topbar" id="topbar">
+  <a class="brand" href="{{ url_for('main.dashboard') }}">{{ ikon('stok', 20) }} Monitoring Stok</a>
+  <span class="user-chip" title="{{ user.nama }} · {{ ROLE_LABEL[user.role] }}">{{ user.nama }}</span>
+  <button class="menu-toggle" type="button" aria-label="Menu" data-menu>{{ ikon('menu', 24) }}</button>
+  <nav class="nav">
+    {% if user.role != 'petugas' %}<a href="{{ url_for('main.dashboard') }}" class="{{ 'on' if ep == 'main.dashboard' }}">{{ ikon('beranda', 18) }}<span>Dashboard</span></a>{% endif %}
+    {% if user.role in ('admin','petugas') %}<a href="{{ url_for('main.input_transaksi') }}" class="{{ 'on' if ep == 'main.input_transaksi' }}">{{ ikon('tambah', 18) }}<span>Input Transaksi</span></a>{% endif %}
+    <a href="{{ url_for('main.stok') }}" class="{{ 'on' if ep in ('main.stok','main.kartu_stok') }}">{{ ikon('stok', 18) }}<span>Stok</span></a>
+    <a href="{{ url_for('main.transaksi') }}" class="{{ 'on' if ep == 'main.transaksi' }}">{{ ikon('transaksi', 18) }}<span>Transaksi</span></a>
+    <a href="{{ url_for('main.daftar_kembali') }}" class="{{ 'on' if ep == 'main.daftar_kembali' }}">{{ ikon('pengembalian', 18) }}<span>Pengembalian</span></a>
+    {% if user.role in ('admin','petugas') %}
+      <a href="{{ url_for('main.opname') }}" class="{{ 'on' if ep == 'main.opname' or (ep.startswith('opname.') and ep != 'opname.pengaturan') }}">{{ ikon('opname', 18) }}<span>Stock Opname</span></a>
+    {% endif %}
+    {% if user.role in ('admin','pimpinan') %}
+      <a href="{{ url_for('main.selisih') }}" class="{{ 'on' if ep in ('main.selisih','admin.rekonsiliasi_sap') }}">{{ ikon('selisih', 18) }}<span>Selisih SAP</span></a>
+      <a href="{{ url_for('laporan.laporan') }}" class="{{ 'on' if ep == 'laporan.laporan' }}">{{ ikon('laporan', 18) }}<span>Laporan</span></a>
+      <a href="{{ url_for('pr.daftar') }}" class="{{ 'on' if ep.startswith('pr.') }}">{{ ikon('pr', 18) }}<span>PR</span></a>
+      {% if user.role == 'pimpinan' %}<a href="{{ url_for('opname.riwayat') }}" class="{{ 'on' if ep.startswith('opname.') }}">{{ ikon('opname', 18) }}<span>Stock Opname</span></a>{% endif %}
+    {% endif %}
+    {% if user.role == 'admin' %}
+      <details class="navmore {{ 'on' if ep.startswith('admin.') or ep == 'opname.pengaturan' }}">
+        <summary>{{ ikon('pengaturan', 18) }}<span>Kelola</span><span aria-hidden="true">▾</span></summary>
+        <div>
+          <a href="{{ url_for('admin.master') }}" class="{{ 'on' if ep == 'admin.master' }}">{{ ikon('master', 18) }}<span>Master SAP</span></a>
+          <a href="{{ url_for('admin.import_transaksi') }}" class="{{ 'on' if ep.startswith('admin.import') }}">{{ ikon('excel', 18) }}<span>Import Excel</span></a>
+          <a href="{{ url_for('admin.akses') }}" class="{{ 'on' if ep == 'admin.akses' }}">{{ ikon('ponsel', 18) }}<span>Akses dari HP</span></a>
+          <a href="{{ url_for('admin.aplikasi_mobile') }}" class="{{ 'on' if ep == 'admin.aplikasi_mobile' }}">{{ ikon('ponsel', 18) }}<span>Aplikasi Mobile</span></a>
+          <a href="{{ url_for('admin.kebun') }}" class="{{ 'on' if ep == 'admin.kebun' }}">{{ ikon('kebun', 18) }}<span>Kebun</span></a>
+          <a href="{{ url_for('admin.kategori') }}" class="{{ 'on' if ep == 'admin.kategori' }}">{{ ikon('kategori', 18) }}<span>Kategori</span></a>
+          <a href="{{ url_for('admin.pengguna') }}" class="{{ 'on' if ep == 'admin.pengguna' }}">{{ ikon('pengguna', 18) }}<span>Pengguna</span></a>
+          <a href="{{ url_for('opname.pengaturan') }}" class="{{ 'on' if ep == 'opname.pengaturan' }}">{{ ikon('opname', 18) }}<span>Laporan Opname</span></a>
+          <a href="{{ url_for('admin.audit_log') }}" class="{{ 'on' if ep == 'admin.audit_log' }}">{{ ikon('log', 18) }}<span>Log</span></a>
+        </div>
+      </details>
+    {% endif %}
+  </nav>
+  <div class="userbox">
+    <a href="{{ url_for('admin.akun') }}" title="Ganti password">{{ ikon('akun', 17) }}<span>{{ user.nama }} · {{ ROLE_LABEL[user.role] }}</span></a>
+    <form method="post" action="{{ url_for('auth.logout') }}" class="form-inline">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <button class="linkbtn" type="submit" aria-label="Keluar" title="Keluar">{{ ikon('logout', 17) }}<span>Keluar</span></button>
+    </form>
+  </div>
+</header>
+{# Navigasi bawah untuk HP & tablet: menu yang paling sering dipakai sesuai peran #}
+{% if user.role == 'petugas' %}
+  {% set tab = [('main.input_transaksi','tambah','Input'), ('main.stok','stok','Stok'), ('main.opname','opname','Opname'), ('main.transaksi','transaksi','Transaksi')] %}
+{% elif user.role == 'pimpinan' %}
+  {% set tab = [('main.dashboard','beranda','Beranda'), ('main.stok','stok','Stok'), ('main.selisih','selisih','Selisih'), ('laporan.laporan','laporan','Laporan')] %}
+{% else %}
+  {% set tab = [('main.dashboard','beranda','Beranda'), ('main.input_transaksi','tambah','Input'), ('main.stok','stok','Stok'), ('main.transaksi','transaksi','Transaksi')] %}
+{% endif %}
+<nav class="tabbar" aria-label="Menu utama">
+  {% for e, ik, lbl in tab %}
+    <a href="{{ url_for(e) }}" class="{{ 'on' if ep == e or (e == 'main.stok' and ep == 'main.kartu_stok') }}">{{ ikon(ik) }}<span>{{ lbl }}</span></a>
+  {% endfor %}
+  <button type="button" data-menu>{{ ikon('menu') }}<span>Menu</span></button>
+</nav>
+{% endif %}
+<main>
+  {% if perlu_restart and user %}
+  <div class="flash warn"><b>Aplikasi sudah diperbarui.</b> {% if user.role == 'admin' %}Tutup jendela <b>start.bat</b> lalu jalankan lagi agar perubahan aktif dan tidak terjadi error.{% else %}Minta admin me-restart aplikasi.{% endif %}</div>
+  {% endif %}
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, m in msgs %}<div class="flash {{ cat if cat in ('ok','error','warn') else 'ok' }}" role="status">{{ m }}</div>{% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+<div id="toast"></div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Dashboard</h1><p class="muted">Ringkasan stok & aktivitas hari ini</p></div>
+  {% if user.role == 'admin' %}<div class="actions"><a class="btn" href="{{ url_for('admin.akses') }}">{{ ikon('ponsel', 18) }}<span>Akses dari HP</span></a>
+    <a class="btn primary" href="{{ url_for('main.input_transaksi') }}">{{ ikon('tambah', 18) }}<span>Input Transaksi</span></a></div>{% endif %}
+</div>
+
+{% if not s.material %}
+<div class="card">
+  <h2>Mulai di sini</h2>
+  <ol>
+    <li>Upload file export SAP di menu <a href="{{ url_for('admin.master') }}">Master SAP</a> sebagai stok awal.</li>
+    <li>Lengkapi daftar <a href="{{ url_for('admin.kebun') }}">Kebun</a> untuk tujuan/asal transfer.</li>
+    <li>Atur kategori & stok minimum material di halaman Master SAP.</li>
+    <li>Buat akun <a href="{{ url_for('admin.pengguna') }}">petugas</a> untuk input lewat HP.</li>
+  </ol>
+</div>
+{% endif %}
+
+<div class="stats">
+  <a class="stat" href="{{ url_for('main.stok') }}"><div class="lbl">Material</div><div class="val">{{ s.material|angka }}</div></a>
+  <a class="stat warn" href="{{ url_for('main.stok', status='menipis') }}"><div class="lbl">Stok menipis</div><div class="val">{{ (s.menipis or 0)|angka }}</div></a>
+  <a class="stat {{ 'danger' if s.minus }}" href="{{ url_for('main.stok', status='habis') }}"><div class="lbl">Stok 0{% if s.minus %} / <b>minus {{ s.minus }}</b>{% endif %}</div><div class="val">{{ (s.habis or 0)|angka }}</div></a>
+  <a class="stat {{ 'danger' if s.expired }}" href="{{ url_for('main.stok', status='expired') }}"><div class="lbl">Barang expired (diblokir)</div><div class="val">{{ (s.expired or 0)|angka }}</div></a>
+  <a class="stat {{ 'warn' if s.locked }}" href="{{ url_for('main.stok', status='locked') }}"><div class="lbl">Kode material dikunci</div><div class="val">{{ (s.locked or 0)|angka }}</div></a>
+  <a class="stat warn" href="{{ url_for('main.selisih') }}"><div class="lbl">Selisih dengan SAP (perlu tindakan)</div><div class="val">{{ (s.selisih or 0)|angka }}</div></a>
+  <a class="stat" href="{{ url_for('main.transaksi', status='belum_posting') }}"><div class="lbl">Transaksi belum diinput SAP</div><div class="val">{{ belum_posting|angka }}</div></a>
+  <a class="stat {{ 'warn' if belum_kembali }}" href="{{ url_for('main.daftar_kembali') }}"><div class="lbl">Barang lama belum kembali</div><div class="val">{{ belum_kembali|angka }}</div></a>
+  <a class="stat" href="{{ url_for('main.transaksi', status='tanpa_foto') }}"><div class="lbl">Keluar tanpa foto</div><div class="val">{{ tanpa_foto|angka }}</div></a>
+  {% if user.role == 'admin' %}
+  <a class="stat" href="{{ url_for('main.stok', kategori='none') }}"><div class="lbl">Belum dikategorikan</div><div class="val">{{ (s.tanpa_kategori or 0)|angka }}</div></a>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="section-title"><h2>Hari ini</h2></div>
+  <div class="stats m-0">
+    {% for j in ['masuk','keluar','transfer_masuk','transfer_keluar','penyesuaian'] %}
+      <a class="stat" href="{{ url_for('main.transaksi', jenis=j, dari=today(), sampai=today()) }}">
+        <div class="lbl">{{ JENIS_LABEL[j] }}</div><div class="val">{{ hari.get(j, 0) }}</div></a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title"><h2>Transaksi terakhir</h2><a href="{{ url_for('main.transaksi') }}">Lihat semua →</a></div>
+  <div class="tbl-wrap">
+  <table class="tbl tbl-cards kartu-trx">
+    <thead><tr><th>Tgl</th><th>Jenis</th><th>Material</th><th class="num">Qty</th><th>Dok / Penerima</th><th>Oleh</th></tr></thead>
+    <tbody>
+    {% for t in terakhir %}
+      <tr class="{{ 'batal' if t.batal }}">
+        <td class="nowrap c-tgl">{{ t.tanggal|tgl }}</td>
+        <td class="keep c-jenis">{{ ui.jenis_badge(t.jenis) }}</td>
+        <td class="desc c-mat"><a href="{{ url_for('main.kartu_stok', mid=t.material_id) }}">{{ t.deskripsi }}</a><br><small>{{ t.material }}</small></td>
+        <td class="num c-qty">{{ t.qty|angka }} {{ t.satuan }}</td>
+        <td class="c-pen">{{ t.nomor_dokumen or '' }}{% if t.penerima %}<br><small>{{ t.penerima }}</small>{% endif %}</td>
+        <td class="c-src"><small>{{ t.oleh }}</small></td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted">Belum ada transaksi.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

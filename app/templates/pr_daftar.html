@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}PR Pemesanan{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>PR Pemesanan Barang</h1>
+    <p class="muted">Purchase Request ke pusat. Export Excel mengikuti format "Pendukung PR (Stock, Terakhir GRN, Periode Pemakaian dan Estimasi GI)".</p></div>
+</div>
+
+{% if user.role == 'admin' %}
+<div class="card">
+  <h2>Upload hasil PR dari SAP</h2>
+  <form method="post" action="{{ url_for('pr.upload_sap') }}" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field grow"><label class="req">File Pendukung PR yang sudah diberi nomor SAP</label>
+      <input type="file" name="file" accept=".xlsx,.xlsm" required></div>
+    <div class="field"><button class="btn primary">Upload ke Progress PR</button></div>
+  </form>
+  <p class="hint">Gunakan file hasil export aplikasi dengan nama seperti <b>Pendukung_PR_PR-2610-002_....xlsx</b>.
+    Sistem mencocokkan Plant, material, Qty dan UoM, lalu mengisi seluruh nomor PR SAP serta mengubah status menjadi Diajukan.</p>
+</div>
+
+<div class="card">
+  <h2>Buat PR baru</h2>
+  <form method="post" action="{{ url_for('pr.baru') }}" class="row">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="field"><label>Judul</label><input name="judul" placeholder="mis. PR UMUM ATK Oktober"></div>
+    <div class="field"><label>Tanggal</label><input type="date" name="tanggal" value="{{ hari_ini }}"></div>
+    {% if not user.kebun_kode and kebun|length > 1 %}
+    <div class="field"><label>Kebun (plant)</label><select name="plant">{% for k in kebun %}<option value="{{ k.kode }}">{{ k.nama }} ({{ k.kode }})</option>{% endfor %}</select></div>
+    {% else %}<input type="hidden" name="plant" value="{{ user.kebun_kode or (kebun[0].kode if kebun) }}">{% endif %}
+    <div class="field"><label>Dibagi ke (bulan)</label><select name="bulan_default">{% for n in range(1, 7) %}<option {{ 'selected' if n == 3 }}>{{ n }}</option>{% endfor %}</select>
+      <div class="hint">Periode Pengeluaran, bisa diubah per barang.</div></div>
+    <div class="field"><label>Isi awal</label><select name="isi"><option value="menipis">Semua barang stok menipis</option><option value="">Kosong (pilih sendiri)</option></select></div>
+    <div class="field"><label>Awalan kode (opsional)</label><input name="awalan" placeholder="mis. 974 untuk ATK"></div>
+    <div class="field"><button class="btn primary">Buat PR</button></div>
+  </form>
+  <p class="hint">"Stok menipis" = stok ≤ stok minimum. Atur stok minimum di Master SAP → Stok minimum cepat.</p>
+</div>
+{% endif %}
+
+<div class="tbl-wrap">
+<table class="tbl tbl-cards">
+  <thead><tr><th>Nomor</th><th>Tanggal</th><th>Judul</th><th>No. PR SAP</th><th class="num">Barang</th><th>Kedatangan</th><th class="num">Estimasi (Rp)</th><th>Status</th><th>Oleh</th><th></th></tr></thead>
+  <tbody>
+  {% for p in rows %}
+    <tr>
+      <td data-label="Nomor"><a href="{{ url_for('pr.detail', pid=p.id) }}"><b>{{ p.nomor }}</b></a></td>
+      <td data-label="Tanggal">{{ p.tanggal|tgl }}</td>
+      <td>{{ p.judul or '' }}</td>
+      <td data-label="PR SAP"><small>{{ p.daftar_sap or p.nomor_sap or '' }}</small></td>
+      <td class="num" data-label="Barang">{{ p.n }}</td>
+      <td data-label="Kedatangan">
+        {% if p.n_dipesan and (p.n_lengkap or 0) >= p.n_dipesan %}<span class="badge b-masuk">Lengkap {{ p.n_lengkap }}/{{ p.n_dipesan }}</span>
+        {% elif (p.n_lengkap or 0) or (p.n_parsial or 0) %}<span class="badge b-penyesuaian">Berjalan {{ p.n_lengkap or 0 }}/{{ p.n_dipesan or 0 }} lengkap</span>
+        {% else %}<span class="badge">Belum datang</span>{% endif %}
+        {% if p.n_parsial %}<br><small>{{ p.n_parsial }} barang parsial</small>{% endif %}
+        {% if p.grn_terakhir %}<br><small>GRN terakhir: <b>{{ p.grn_terakhir }}</b> · {{ p.n_grn }} dokumen</small>{% endif %}
+      </td>
+      <td class="num" data-label="Estimasi">{{ p.total|rp }}</td>
+      <td><span class="badge {{ 'b-masuk' if p.status == 'selesai' else ('b-penyesuaian' if p.status == 'diajukan' else '') }}">{{ STATUS[p.status] }}</span></td>
+      <td><small>{{ p.oleh }}</small></td>
+      <td class="c-aksi"><a class="btn sm" href="{{ url_for('pr.detail', pid=p.id) }}">Buka</a> <a class="btn sm" href="{{ url_for('pr.export', pid=p.id) }}">Excel</a></td>
+    </tr>
+  {% else %}<tr><td colspan="10" class="muted">Belum ada PR.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

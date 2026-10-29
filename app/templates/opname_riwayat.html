@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Riwayat Stock Opname{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Riwayat Stock Opname</h1>
+    <p class="muted">Centang beberapa sesi (mis. Sparepart, Fertilizers, Chemicals di hari yang sama) lalu export menjadi satu file Berita Acara: satu sheet per jenis barang + sheet Selisih.</p></div>
+  {% if user.role == 'admin' %}<a class="btn primary" href="{{ url_for('main.opname') }}">+ Opname baru</a>{% endif %}
+</div>
+
+<form method="get" action="{{ url_for('opname.export') }}">
+  <div class="tbl-wrap">
+  <table class="tbl tbl-cards kartu-opname-riwayat">
+    <thead><tr><th><input type="checkbox" data-check-all="sesi" aria-label="Pilih semua"></th><th>Tanggal</th><th>Jenis barang</th><th>Lokasi</th>
+      <th class="num">Dihitung</th><th class="num">Selisih</th><th class="num">Belum disesuaikan SAP</th><th>Keterangan</th><th>Oleh</th><th></th></tr></thead>
+    <tbody>
+    {% for s in rows %}
+      <tr>
+        <td class="c-cek"><input type="checkbox" name="sesi" value="{{ s.id }}" aria-label="Pilih sesi {{ s.id }}"></td>
+        <td class="nowrap c-tgl">{{ s.tanggal|tgl }}</td>
+        <td class="c-mat"><b>{{ s.jenis_barang }}</b></td>
+        <td data-label="Lokasi">{{ s.lokasi or '' }}</td>
+        <td class="num" data-label="Dihitung">{{ s.n }}</td>
+        <td class="num {{ 'minus' if s.n_selisih }}" data-label="Selisih">{{ s.n_selisih }}</td>
+        <td class="num {{ 'minus' if s.n_belum_sap }}" data-label="Belum SAP">{{ s.n_belum_sap }}</td>
+        <td><small>{{ s.keterangan or '' }}</small></td>
+        <td data-label="Oleh"><small>{{ s.oleh }} · {{ s.created_at }}</small></td>
+        <td class="nowrap c-aksi"><a class="btn sm" href="{{ url_for('opname.detail', sid=s.id) }}">Lihat</a>
+          <a class="btn sm" href="{{ url_for('opname.export', sesi=s.id) }}">Excel</a>
+          <a class="btn sm" href="{{ url_for('opname.export', tanggal=s.tanggal) }}" title="Semua jenis barang di tanggal ini">Excel 1 hari</a></td>
+      </tr>
+    {% else %}<tr><td colspan="10" class="muted">Belum ada stock opname yang disimpan.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if rows %}
+  <div class="actions" style="margin-top:.75rem"><button class="btn primary">Export yang dicentang (Berita Acara)</button></div>
+  {% endif %}
+</form>
+{% endblock %}

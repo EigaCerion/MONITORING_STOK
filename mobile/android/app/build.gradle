@@ -1,0 +1,83 @@
+apply plugin: 'com.android.application'
+
+def stokVersion = project.hasProperty('stokVersion') ? project.property('stokVersion') : '0.1.0'
+def versionParts = stokVersion.tokenize('.').collect { it as int }
+if (versionParts.size() != 3 || versionParts[1] >= 100 || versionParts[2] >= 100) {
+    throw new GradleException("stokVersion harus major.minor.patch; minor dan patch di bawah 100")
+}
+def stokVersionCode = versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2]
+def releaseKeyFile = System.getenv('MONITORING_STOK_KEY_PROPERTIES')
+def releaseKey = new Properties()
+if (releaseKeyFile) {
+    def propertiesFile = file(releaseKeyFile)
+    if (!propertiesFile.exists()) throw new GradleException("Berkas kunci rilis tidak ditemukan: ${releaseKeyFile}")
+    propertiesFile.withInputStream { releaseKey.load(it) }
+}
+def releaseRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+if (releaseRequested && !releaseKeyFile) {
+    throw new GradleException('Build rilis memerlukan MONITORING_STOK_KEY_PROPERTIES')
+}
+
+android {
+    namespace = "id.citramahkota.monitoringstok"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "id.citramahkota.monitoringstok"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode stokVersionCode
+        versionName stokVersion
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        if (releaseKeyFile) {
+            release {
+                storeFile file(releaseKey['storeFile'])
+                storePassword releaseKey['storePassword']
+                keyAlias releaseKey['keyAlias']
+                keyPassword releaseKey['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (releaseKeyFile) signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

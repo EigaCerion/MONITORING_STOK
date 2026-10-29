@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+{% block title %}Selisih SAP{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Cek Stok Aplikasi vs SAP</h1>
+    <p class="muted">Data SAP per <b>{{ info.per or '-' }}</b>{% if info.hilang %} · {{ info.hilang }} material tidak ada di file SAP terakhir{% endif %}</p></div>
+  <div class="actions">
+    {% if user.role == 'admin' %}<a class="btn primary" href="{{ url_for('admin.rekonsiliasi_sap') }}">Rekonsiliasi MB51 + MB52</a>{% endif %}
+    <a class="btn" href="{{ url_for('main.transaksi', status='belum_posting') }}">Transaksi belum diinput SAP</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Cara membaca</h2>
+  <p style="margin:.2rem 0">Beda <b>stok aplikasi</b> dengan <b>stok SAP</b> dikelompokkan menurut penyebabnya:</p>
+  <ul style="margin:.3rem 0 0;padding-left:1.2rem">
+    <li><b class="minus">1. Selisih nyata</b> — tidak ada transaksi yang menjelaskan: salah input qty, transaksi terlewat. Cek kartu stoknya.</li>
+    <li><b class="minus">2. Selisih fisik belum disesuaikan di SAP</b> — hasil <b>Ubah Qty / Stock Opname</b> (fisik beda dengan sistem). Sesuaikan juga di SAP, lalu tandai ✓.</li>
+    <li><b>3. Transaksi harian belum diinput SAP</b> — masuk/keluar/transfer yang belum diinput. <u>Wajar</u>; tandai ✓ setelah diinput.</li>
+    <li><b>Stok SAP</b> = angka file SAP per {{ info.per or '-' }} ditambah transaksi yang sudah ditandai ✓ SAP setelah file itu dibuat.</li>
+    <li>Alur akhir shift: tandai transaksi yang sudah diinput ke SAP → export stok dari SAP → upload di Master SAP (isi jam export) → cek halaman ini.</li>
+  </ul>
+</div>
+
+{% if info.n_tunggu %}
+<div class="flash warn">{{ info.n_tunggu }} transaksi ✓ SAP diinput setelah file SAP per {{ info.per }}, jadi angka SAP-nya masih perkiraan.
+  Untuk memastikan input di SAP benar, upload export SAP terbaru di <a href="{{ url_for('admin.master') }}">Master SAP</a> (misalnya tiap akhir shift).</div>
+{% endif %}
+<div class="card">
+  <div class="section-title"><h2>1. Selisih nyata ({{ nyata|length }})</h2></div>
+  <form method="post" data-confirm="Ubah stok aplikasi material yang dicentang menjadi Stok SAP + Belum posting?">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        {% if user.role == 'admin' %}<th><input type="checkbox" data-check-all="ids" aria-label="Pilih semua"></th>{% endif %}
+        <th>Material</th><th>Deskripsi</th><th class="num">Aplikasi</th><th class="num">SAP</th><th class="num">Trx harian belum di SAP</th>
+        <th class="num">Selisih nyata</th><th>Sat</th><th></th></tr></thead>
+      <tbody>
+      {% for m in nyata %}
+        <tr>
+          {% if user.role == 'admin' %}<td><input type="checkbox" name="ids" value="{{ m.id }}"></td>{% endif %}
+          <td class="nowrap"><a href="{{ url_for('main.kartu_stok', mid=m.id) }}">{{ m.material }}</a> {{ ui.sp_badge(m) }}</td>
+          <td class="desc">{{ m.deskripsi }}<br><small>{{ m.kategori or '' }}</small></td>
+          <td class="num">{{ m.stok|angka }}</td>
+          <td class="num">{{ ui.sel_sap(m) }}</td>
+          <td class="num">{{ ui.sel_pending(m) }}</td>
+          <td class="num {{ 'plus' if m.selisih_nyata > 0 else 'minus' }}"><b>{{ '+' if m.selisih_nyata > 0 }}{{ m.selisih_nyata|angka }}</b></td>
+          <td>{{ m.satuan }}</td>
+          <td class="nowrap"><a class="btn sm" href="{{ url_for('main.kartu_stok', mid=m.id) }}">Riwayat</a>
+            {% if user.role == 'admin' %}{{ ui.tombol_ubah(m) }}{% endif %}</td>
+        </tr>
+      {% else %}<tr><td colspan="9" class="muted">Tidak ada selisih nyata — stok aplikasi cocok dengan SAP. 👍</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if user.role == 'admin' and nyata %}
+    <div class="actions" style="margin-top:.75rem;align-items:center"><button class="btn primary">Koreksi yang dicentang mengikuti SAP</button>
+      <small class="muted">Hanya bila Anda yakin SAP yang benar. Stok aplikasi menjadi Stok SAP + Belum diinput SAP, sehingga transaksi yang belum diposting tetap terhitung.</small></div>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <h2>2. Selisih fisik belum disesuaikan di SAP ({{ fisik|length }})</h2>
+  <p class="hint" style="margin-top:0">Stok aplikasi sudah diubah mengikuti fisik (Ubah Qty / Stock Opname), tapi SAP belum. Buat penyesuaian
+    yang sama di SAP, lalu centang dan tandai ✓ di bawah.</p>
+  <form method="post" data-confirm="Tandai penyesuaian material yang dicentang sudah disesuaikan di SAP?">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="aksi" value="posting_fisik">
+    <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>{% if user.role == 'admin' %}<th><input type="checkbox" data-check-all="ids" aria-label="Pilih semua"></th>{% endif %}
+        <th>Material</th><th>Deskripsi</th><th class="num">Aplikasi (fisik)</th><th class="num">SAP</th>
+        <th class="num">Selisih fisik</th><th class="num">Trx harian belum di SAP</th><th>Sat</th><th></th></tr></thead>
+      <tbody>
+      {% for m in fisik %}
+        <tr>
+          {% if user.role == 'admin' %}<td><input type="checkbox" name="ids" value="{{ m.id }}"></td>{% endif %}
+          <td class="nowrap"><a href="{{ url_for('main.kartu_stok', mid=m.id) }}">{{ m.material }}</a> {{ ui.sp_badge(m) }}</td>
+          <td class="desc">{{ m.deskripsi }}</td>
+          <td class="num">{{ m.stok|angka }}</td>
+          <td class="num">{{ ui.sel_sap(m) }}</td>
+          <td class="num">{{ ui.sel_fisik(m) }}</td>
+          <td class="num">{{ ui.sel_pending(m) }}</td>
+          <td>{{ m.satuan }}</td>
+          <td><a class="btn sm" href="{{ url_for('main.kartu_stok', mid=m.id) }}">Riwayat</a></td>
+        </tr>
+      {% else %}<tr><td colspan="9" class="muted">Tidak ada. Semua hasil Ubah Qty / opname sudah disesuaikan di SAP.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if user.role == 'admin' and fisik %}
+    <div class="sticky-bar" style="margin-top:.6rem">
+      <div><label>No. dokumen SAP (opsional)</label><input name="sap_doc" placeholder="mis. no. dokumen penyesuaian"></div>
+      <button class="btn primary">Tandai ✓ sudah disesuaikan di SAP</button>
+    </div>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <h2>3. Transaksi harian belum diinput SAP ({{ menunggu|length }})</h2>
+  <p class="hint" style="margin-top:0">Stok cocok — bedanya hanya masuk/keluar/transfer yang belum diinput ke SAP. Setelah diinput, tandai ✓ SAP di menu
+    <a href="{{ url_for('main.transaksi', status='belum_posting') }}">Transaksi</a>.</p>
+  <div class="tbl-wrap">
+  <table class="tbl">
+    <thead><tr><th>Material</th><th>Deskripsi</th><th class="num">Aplikasi</th><th class="num">SAP</th><th class="num">Trx harian belum di SAP</th><th>Sat</th></tr></thead>
+    <tbody>
+    {% for m in menunggu %}
+      <tr>
+        <td class="nowrap"><a href="{{ url_for('main.kartu_stok', mid=m.id) }}">{{ m.material }}</a> {{ ui.sp_badge(m) }}</td>
+        <td class="desc">{{ m.deskripsi }}</td>
+        <td class="num">{{ m.stok|angka }}</td>
+        <td class="num">{{ ui.sel_sap(m) }}</td>
+        <td class="num">{{ ui.sel_pending(m) }}</td>
+        <td>{{ m.satuan }}</td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="muted">Tidak ada.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% if user.role == 'admin' %}{{ ui.dialog_ubah(alasan, hari_ini) }}{% endif %}
+{% endblock %}
