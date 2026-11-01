@@ -1,9 +1,11 @@
 # Rencana Aplikasi Offline dan Sinkronisasi
 
-Status dokumen: **fondasi seri 0.1 sudah dibuat untuk uji lapangan**. Transaksi
-keluar, dua foto, antrean offline, sinkron pagi/akhir hari, Tailscale, idempotensi,
-perangkat Admin, dan pembaruan GitHub sudah tersedia. Transaksi masuk, transfer,
-PR/GRN, dan opname offline masih berada pada tahap berikutnya.
+Status dokumen: **flowStok 1.0.2 stabil sudah disiapkan untuk operasional**. Transaksi
+keluar/masuk/transfer antar-kebun, dua foto, antrean offline, sinkron pagi/akhir
+hari, Tailscale, idempotensi, perangkat Admin, dan pembaruan GitHub sudah
+tersedia. Cakupan mobile mencakup transaksi keluar, masuk, transfer, riwayat,
+stok, dan Stock Opname bersama. PR/GRN lengkap serta rekonsiliasi SAP tetap
+berada di aplikasi web.
 
 ## Tujuan
 
@@ -119,8 +121,9 @@ kemudian admin memilih simpan, koreksi, gabungkan, atau batalkan dengan audit lo
 2. Buat aplikasi Android dari antarmuka yang sudah dikenal operator, memakai
    database lokal, kamera langsung, dan tujuan sinkron Tailscale yang sama.
    Mulai dari transaksi keluar dan foto.
-3. Tambahkan transaksi masuk, retur, PR/GRN, lalu opname offline. Opname dibuat
-   tahap terakhir karena membutuhkan penguncian dan konflik antaranggota.
+3. Tambahkan transaksi masuk, retur, dan opname offline. PR/GRN lengkap tetap
+   di web; opname memakai penguncian material dan pemeriksaan konflik
+   antaranggota pada server.
 4. Uji terbatas pada satu gudang dan beberapa HP dengan simulasi sinyal putus,
    unggah berulang, jam HP salah, stok habis, dan foto gagal.
 5. Setelah hasil audit sesuai, terapkan aturan wajib sinkron pagi dan upload akhir

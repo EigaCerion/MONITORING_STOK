@@ -15,9 +15,11 @@ from .auth import ROLE_LABEL, login_required
 from .db import MOBILE_DEFAULTS, audit, get_db, mobile_pengaturan, opname_aktif, tx
 from .excel_io import (GUDANG_SLOC, ExcelError, angka, baca_master_sap, baca_mb51,
                        baca_supplementary, baca_transaksi)
+from .mobile_release import apk_info, latest_stable_apk
 from .report import EFEK_SQL
 from .stock import (ALASAN_SAP, EPS, JENIS_LABEL, bulat, cari_kebun, efek, sesuaikan_stok, simpan_transaksi,
                     stok_material, target_sap, validasi)
+from .supplementary import legacy_plant_aliases
 from .views_main import PER_HAL, _query_stok, halaman, hari_ini, kembali, wants_json
 
 bp = Blueprint("admin", __name__)
@@ -196,8 +198,13 @@ def simpan_supplementary(db, rows, original_name, user_id):
     groups = {(row["plant"], row["target_type"]) for row in rows}
     with tx(db):
         for plant, target_type in groups:
-            db.execute("UPDATE supplementary_targets SET active = 0 WHERE plant = ? AND target_type = ?",
-                       (plant, target_type))
+            aliases = legacy_plant_aliases(plant)
+            marks = ",".join("?" for _ in aliases)
+            db.execute(
+                f"UPDATE supplementary_targets SET active = 0 "
+                f"WHERE plant IN ({marks}) AND target_type = ?",
+                (*aliases, target_type),
+            )
         for row in rows:
             source = f"{original_name} · {row['source']}"
             db.execute(
@@ -711,6 +718,25 @@ def _perlu_verifikasi_transfer(row):
     return bool((sloc and sloc not in GUDANG_SLOC) or mvt in TRANSFER_MVT or row.get("transfer_pair"))
 
 
+def _wajib_keputusan_transfer(row):
+    """Satu-satunya aturan untuk menentukan apakah pilihan arah harus tampil dan divalidasi.
+
+    Rantai plasma lengkap sudah mempunyai arah yang diturunkan dari pasangan 641 → 101 →
+    pengeluaran blok. Baris seperti itu tidak boleh kembali ditagih keputusan manual hanya
+    karena pernah mempunyai review transfer pada rekonsiliasi terdahulu.
+    """
+    if not row.get("perlu_verifikasi_transfer"):
+        return False
+    if row.get("flow_chain_role") in {"source", "receipt", "issue"}:
+        return False
+    if row.get("flow_pair_role") == "receipt":
+        return False
+    status = row.get("status")
+    return status in {"cocok", "baru", "verifikasi", "verifikasi_ulang"} or (
+        status == "gabung" and bool(row.get("group_lead"))
+    )
+
+
 def _pilih_kandidat(candidates, row):
     """Pilih satu kandidat secara aman; teks MB51 memecahkan kandidat dengan qty sama."""
     if len(candidates) == 1:
@@ -822,6 +848,28 @@ def _rekonsiliasi_mb51(db, rows, mulai=None):
     for row in rows:
         row["review_key"] = _review_key(row)
         row["perlu_verifikasi_transfer"] = _perlu_verifikasi_transfer(row)
+        # Keputusan rantai/pasangan lengkap lebih kuat daripada review manual lama. Jalankan
+        # sebelum membaca review agar baris sumber otomatis tidak berubah menjadi verifikasi_ulang.
+        if row.get("flow_chain_role") in {"receipt", "issue"}:
+            row.update(status="rantai", perlu_verifikasi_transfer=False)
+            continue
+        if row.get("flow_chain_role") == "source":
+            row["perlu_verifikasi_transfer"] = False
+            # Bila baris ini pernah diputuskan manual sebelum pasangan plasma lengkap tersedia,
+            # pertahankan transaksi lamanya tetapi naikkan menjadi pasangan otomatis. Dengan begitu
+            # dokumen 101/pengeluaran blok dapat ditautkan tanpa meminta arah yang sudah pasti.
+            lama_otomatis = review.get(row["review_key"])
+            transaksi_otomatis = next(
+                (t for t in trx if t["id"] == (lama_otomatis or {}).get("transaction_id")), None
+            )
+            if transaksi_otomatis:
+                row.update(status="cocok", transaction_id=transaksi_otomatis["id"],
+                           transaksi=transaksi_otomatis, metode="material")
+                digunakan.add(transaksi_otomatis["id"])
+                continue
+        elif row.get("flow_pair_role") == "receipt":
+            row.update(status="pasangan", perlu_verifikasi_transfer=False)
+            continue
         lama = review.get(row["review_key"])
         if lama:
             konflik = bool(row.get("transfer_pair") and lama.get("decision") != row.get("transfer_saran"))
@@ -842,15 +890,6 @@ def _rekonsiliasi_mb51(db, rows, mulai=None):
             else:
                 row.update(status="reversal", perlu_verifikasi_transfer=False)
             continue
-        if row.get("flow_chain_role") in {"receipt", "issue"}:
-            row.update(status="rantai", perlu_verifikasi_transfer=False)
-            continue
-        if row.get("flow_chain_role") == "source":
-            row["perlu_verifikasi_transfer"] = False
-        elif row.get("flow_pair_role") == "receipt":
-            row.update(status="pasangan", perlu_verifikasi_transfer=False)
-            continue
-
         detail_key = (row.get("sap_doc"), row.get("movement_type"), row.get("tanggal"),
                       round(float(row.get("qty") or 0), 3), (row.get("material") or "").upper())
         tersimpan = list(dict.fromkeys(rincian_sap.get(detail_key, [])))
@@ -1063,6 +1102,8 @@ def _siapkan_transaksi_baru(db, rows, mb52_by_mid, mb52_by_key, sap_per, same_da
                    if row["tercakup_mb52"] else kontrol["required"])
         row.update(status="baru", kontrol=kontrol, residual_after=sesudah,
                    aman=abs(sesudah) <= abs(kontrol["required"]) + EPS)
+    for row in rows:
+        row["wajib_keputusan_operator"] = _wajib_keputusan_transfer(row)
     return rows
 
 
@@ -1161,12 +1202,29 @@ def rekonsiliasi_sap_konfirmasi():
         abort(403)
     dipilih = {int(i) for i in request.form.getlist("matches") + request.form.getlist("news")
                + request.form.getlist("reviews") if i.isdigit()}
+
+    def tampilkan_kembali(pesan, error_indices=None):
+        """Kembalikan pratinjau tanpa membuang ratusan pilihan operator."""
+        form_state = {
+            "selected": dipilih,
+            "arah": {i: request.form.get(f"arah_{i}", "").strip() for i in range(len(data["rows"]))},
+            "pihak": {i: request.form.get(f"pihak_{i}", "").strip() for i in range(len(data["rows"]))},
+        }
+        flash(pesan, "error")
+        return render_template(
+            "rekonsiliasi_sap.html", rows=data["rows"], pending=data.get("pending", []), token=token,
+            stats=data.get("stats", {}), dilewati=data.get("dilewati", 0), nama_file=data["file"],
+            nama_file52=data.get("file52"), sap_per=data.get("sap_per"),
+            mulai=data.get("mulai"), diabaikan_awal=data.get("diabaikan_awal", 0),
+            form_state=form_state, error_indices=set(error_indices or []),
+            now_local=dt.datetime.now().strftime("%Y-%m-%dT%H:%M")), 400
+
     if not dipilih:
-        flash("Tidak ada pasangan atau transaksi baru yang dipilih", "error")
-        return redirect(url_for("admin.rekonsiliasi_sap"))
+        return tampilkan_kembali("Tidak ada pasangan atau transaksi baru yang dipilih")
 
     keputusan = {}
     error_keputusan = []
+    error_indices = set()
     for i in sorted(dipilih):
         if i < 0 or i >= len(data["rows"]):
             continue
@@ -1176,8 +1234,9 @@ def rekonsiliasi_sap_konfirmasi():
             error_keputusan.append(
                 f"baris {row['_baris']}: upload MB52 plant {row['plant']} sebelum memindahkan transaksi"
             )
+            error_indices.add(i)
             continue
-        if not row.get("perlu_verifikasi_transfer"):
+        if not _wajib_keputusan_transfer(row):
             continue
         arah = request.form.get(f"arah_{i}", "").strip()
         pihak = request.form.get(f"pihak_{i}", "").strip()
@@ -1188,23 +1247,23 @@ def rekonsiliasi_sap_konfirmasi():
             diizinkan = {"transit"}
         if arah not in diizinkan:
             error_keputusan.append(f"baris {row['_baris']}: pilih arah pergerakan")
+            error_indices.add(i)
             continue
         if arah in ("masuk_store", "transfer_masuk") and row["qty"] <= 0:
             error_keputusan.append(f"baris {row['_baris']}: qty SAP negatif tidak dapat dipilih sebagai barang masuk")
+            error_indices.add(i)
         elif arah in ("keluar_store", "transfer_keluar") and row["qty"] >= 0:
             error_keputusan.append(f"baris {row['_baris']}: qty SAP positif tidak dapat dipilih sebagai barang keluar")
+            error_indices.add(i)
         elif arah in ("transfer_masuk", "transfer_keluar") and not pihak:
             error_keputusan.append(f"baris {row['_baris']}: isi kebun asal/tujuan")
+            error_indices.add(i)
         else:
             keputusan[i] = (arah, pihak)
     if error_keputusan:
-        flash("Verifikasi transfer belum lengkap: " + " · ".join(error_keputusan), "error")
-        return render_template(
-            "rekonsiliasi_sap.html", rows=data["rows"], pending=data.get("pending", []), token=token,
-            stats=data.get("stats", {}), dilewati=data.get("dilewati", 0), nama_file=data["file"],
-            nama_file52=data.get("file52"), sap_per=data.get("sap_per"),
-            mulai=data.get("mulai"), diabaikan_awal=data.get("diabaikan_awal", 0),
-            now_local=dt.datetime.now().strftime("%Y-%m-%dT%H:%M")), 400
+        return tampilkan_kembali(
+            "Verifikasi transfer belum lengkap: " + " · ".join(error_keputusan), error_indices
+        )
 
     db = get_db()
     berhasil = penyesuaian = baru = dikoreksi = ditinjau = master_baru = dibagi_tujuan = 0
@@ -1763,12 +1822,16 @@ def aplikasi_mobile():
            ORDER BY d.active DESC, COALESCE(d.last_seen_at,d.created_at) DESC"""
     ).fetchall()
     dist_apk = Path(__file__).resolve().parent.parent / "mobile" / "dist-apk"
-    apk_debug = max(dist_apk.glob("MonitoringStok-*-debug.apk"), key=lambda path: path.stat().st_mtime,
-                    default=None) if dist_apk.exists() else None
+    apk_debug = max(
+        (*dist_apk.glob("flowStok-*-debug.apk"), *dist_apk.glob("MonitoringStok-*-debug.apk")),
+        key=lambda path: path.stat().st_mtime, default=None,
+    ) if dist_apk.exists() else None
+    apk_stable = latest_stable_apk()
     return render_template(
         "aplikasi_mobile.html",
         settings=mobile_pengaturan(db),
         devices=devices,
+        apk_stable=apk_info(apk_stable),
         apk_debug={"name": apk_debug.name, "size_mb": round(apk_debug.stat().st_size / 1024 / 1024, 1)}
                   if apk_debug else None,
     )

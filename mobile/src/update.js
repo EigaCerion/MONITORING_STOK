@@ -44,13 +44,16 @@ export const checkUpdate = async (repoValue, currentVersion) => {
   const release = response.data;
   const candidates = [];
   for (const asset of Array.isArray(release?.assets) ? release.assets : []) {
-    const match = /^MonitoringStok-(\d{1,6}\.\d{1,2}\.\d{1,2})\.apk$/i.exec(String(asset?.name ?? ''));
+    const match = /^(flowStok|MonitoringStok)-(\d{1,6}\.\d{1,2}\.\d{1,2})\.apk$/i.exec(String(asset?.name ?? ''));
     const url = match ? safeAssetUrl(asset.browser_download_url, repo) : null;
-    if (url) candidates.push({ version: match[1], url, name: asset.name, size: Number(asset.size) || 0 });
+    if (url) candidates.push({
+      version: match[2], url, name: asset.name, size: Number(asset.size) || 0,
+      brandPriority: match[1].toLowerCase() === 'flowstok' ? 1 : 0,
+    });
   }
-  candidates.sort((a, b) => compareVersions(b.version, a.version) ?? 0);
+  candidates.sort((a, b) => (compareVersions(b.version, a.version) ?? 0) || b.brandPriority - a.brandPriority);
   const latest = candidates[0];
-  if (!latest) throw new Error('Rilis terbaru belum memiliki APK bernama MonitoringStok-x.y.z.apk');
+  if (!latest) throw new Error('Rilis terbaru belum memiliki APK flowStok-x.y.z.apk');
   return {
     configured: true,
     available: compareVersions(latest.version, currentVersion) === 1,

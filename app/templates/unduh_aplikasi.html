@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "_ikon.html" import ikon %}
+{% block title %}Unduh Aplikasi Gudang{% endblock %}
+{% block content %}
+<div class="page-head app-download-head">
+  <div>
+    <img class="app-download-logo" src="{{ url_for('static', filename='monitoring-stok-logo.svg') }}" alt="Logo flowStok">
+    <p class="eyebrow">APLIKASI RESMI PETUGAS GUDANG</p>
+    <h1>flowStok Mobile</h1>
+    <p class="muted">Catat transaksi dan opname dari HP, tetap bekerja saat sinyal putus, lalu sinkronkan ke laptop server.</p>
+  </div>
+  {% if apk %}<span class="badge b-masuk">Versi stabil {{ apk.version }}</span>{% endif %}
+</div>
+
+<div class="grid two app-download-grid">
+  <section class="card app-download-primary">
+    <h2>{{ ikon('ponsel', 22) }} Unduh ke HP Android</h2>
+    {% if apk %}
+      <p><b>{{ apk.name }}</b><br><span class="muted">Ukuran sekitar {{ apk.size_mb }} MB</span></p>
+      <a class="btn primary block app-download-button" href="{{ url_for('main.unduh_aplikasi_apk') }}">
+        {{ ikon('unduh', 20) }} Unduh APK stabil {{ apk.version }}
+      </a>
+      <p class="hint">Jika Android menampilkan peringatan, izinkan pemasangan dari browser yang dipakai mengunduh. Jangan mengunduh APK dari sumber lain.</p>
+    {% else %}
+      <div class="flash warn">APK stabil belum tersedia di laptop server. Hubungi Admin.</div>
+    {% endif %}
+    {% if github_repo %}
+      <a class="btn block" href="https://github.com/{{ github_repo }}/releases/latest" target="_blank" rel="noopener">
+        {{ ikon('unduh', 18) }} Lihat rilis terbaru di GitHub
+      </a>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>{{ ikon('pengaturan', 21) }} Yang harus disiapkan</h2>
+    <ol class="readable-list app-steps">
+      <li><b>HP Android</b> dengan ruang kosong untuk aplikasi dan foto transaksi.</li>
+      <li><b>Tailscale sudah terpasang dan aktif.</b></li>
+      <li>Jika sudah memiliki Tailscale, <b>minta akses private kepada Admin</b> agar akun HP dapat masuk ke jaringan server.</li>
+      <li>Minta <b>alamat server Tailscale</b>, username, dan password aplikasi kepada Admin.</li>
+    </ol>
+    <div class="notice warn"><b>Penting:</b> Tailscale aktif saja belum cukup. Perangkat wajib sudah diberi akses private oleh Admin.</div>
+  </section>
+</div>
+
+<section class="card app-poster-card">
+  <div>
+    <p class="eyebrow">POSTER SOSIALISASI</p>
+    <h2>Bagikan kepada petugas gudang</h2>
+    <p class="muted">Poster berisi manfaat aplikasi, cara mengunduh, dan kewajiban akses private Tailscale.</p>
+    <a class="btn block" href="{{ url_for('static', filename='poster-flowstok-1.0.1.png') }}" download>
+      {{ ikon('unduh', 18) }} Unduh poster versi stabil
+    </a>
+  </div>
+  <a href="{{ url_for('static', filename='poster-flowstok-1.0.1.png') }}" target="_blank" rel="noopener">
+    <img src="{{ url_for('static', filename='poster-flowstok-1.0.1.png') }}" alt="Poster ajakan mengunduh flowStok 1.0.1">
+  </a>
+</section>
+
+<section class="card tutorial-mobile">
+  <div class="page-head"><div><p class="eyebrow">TUTORIAL PENGGUNAAN</p><h2>Dari instalasi sampai upload akhir hari</h2></div></div>
+  <div class="tutorial-grid">
+    <article><span>1</span><h3>Pasang aplikasi</h3><p>Tekan tombol Unduh APK, buka berkas yang selesai diunduh, lalu pilih <b>Instal</b>. Jika diminta, izinkan pemasangan dari browser.</p></article>
+    <article><span>2</span><h3>Hubungkan Tailscale</h3><p>Buka Tailscale dan pastikan status tersambung. Bila server belum terlihat, hubungi Admin untuk akses private.</p></article>
+    <article><span>3</span><h3>Login pertama</h3><p>Masukkan alamat server dari Admin, nama perangkat, username, dan password. Alamat server cukup diatur sekali.</p></article>
+    <article><span>4</span><h3>Sinkron pagi</h3><p>Sebelum bekerja, tekan <b>Sinkron sekarang</b>. Material, stok, tujuan, riwayat, serta sesi opname akan disimpan di HP.</p></article>
+    <article><span>5</span><h3>Catat pekerjaan</h3><p>Pilih Barang Keluar, Barang Masuk, atau Transfer. Isi data, ambil foto bila diwajibkan, lalu simpan ke antrean HP.</p></article>
+    <article><span>6</span><h3>Periksa stok dan histori</h3><p>Buka menu Stok untuk mencari saldo material. Histori menampilkan transaksi dari hasil sinkron terakhir.</p></article>
+    <article><span>7</span><h3>Stock Opname</h3><p>Buka sesi yang tersedia, cari kode material, masukkan qty fisik, lalu upload hitungan. Jangan menimpa hitungan anggota lain.</p></article>
+    <article><span>8</span><h3>Upload akhir hari</h3><p>Aktifkan Tailscale, buka Upload, lalu tekan <b>Upload semua</b>. Jangan pulang sebelum antrean aktif menunjukkan nol.</p></article>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Jika sinkron gagal</h2>
+  <ol class="readable-list">
+    <li>Pastikan data internet/Wi-Fi dan Tailscale aktif.</li>
+    <li>Pastikan akses private Tailscale sudah disetujui Admin.</li>
+    <li>Periksa kembali alamat laptop server pada Pengaturan aplikasi.</li>
+    <li>Pastikan laptop server menyala dan aplikasi flowStok berjalan.</li>
+    <li>Jangan menghapus antrean. Setelah koneksi pulih, tekan Upload lagi; pengaman sinkron mencegah transaksi ganda.</li>
+  </ol>
+</section>
+{% endblock %}

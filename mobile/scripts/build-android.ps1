@@ -1,4 +1,4 @@
-# Bangun APK Monitoring Stok memakai JDK/SDK yang sama dengan aplikasi Comic.
+# Bangun APK flowStok memakai JDK/SDK yang sama dengan aplikasi Comic.
 param([switch]$ModeDebug)
 
 $ErrorActionPreference = 'Stop'
@@ -23,7 +23,7 @@ if (-not $ModeDebug) {
         'D:\CODE\key\monitoring-stok\key.properties'
     }
     if (-not (Test-Path $keyProperties)) {
-        throw "Kunci rilis khusus Monitoring Stok belum tersedia: $keyProperties. Bangun -ModeDebug untuk uji HP."
+        throw "Kunci rilis khusus flowStok belum tersedia: $keyProperties. Bangun -ModeDebug untuk uji HP."
     }
     $env:MONITORING_STOK_KEY_PROPERTIES = [System.IO.Path]::GetFullPath($keyProperties)
 }
@@ -59,6 +59,13 @@ if (-not (Test-Path $source)) { throw "APK hasil build tidak ditemukan: $source"
 $dist = Join-Path $mobileRoot 'dist-apk'
 New-Item -ItemType Directory -Force $dist | Out-Null
 $suffix = if ($ModeDebug) { '-debug' } else { '' }
-$target = Join-Path $dist "MonitoringStok-$version$suffix.apk"
+$target = Join-Path $dist "flowStok-$version$suffix.apk"
 Copy-Item $source $target -Force
 Write-Host "APK selesai: $target"
+
+# Nama lama dipertahankan sebagai aset kompatibilitas. APK Monitoring Stok 1.0.0
+# hanya mengenali pola ini, sehingga pengguna dapat beralih ke flowStok tanpa
+# instalasi manual. Unggah kedua nama selama masa transisi dari nama aplikasi lama.
+$legacyAsset = Join-Path $dist "MonitoringStok-$version.apk"
+Copy-Item $source $legacyAsset -Force
+Write-Host "Aset kompatibilitas pembaruan: $legacyAsset"

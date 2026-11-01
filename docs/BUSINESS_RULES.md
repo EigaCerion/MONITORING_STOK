@@ -48,6 +48,11 @@ Operator tetap dapat melanjutkan setelah melihat transaksi sebelumnya.
 - Pemakaian lapangan wajib memiliki blok sebagai Tujuan BON.
 - Master Supplementary memetakan nama blok yang dikenal operator (contoh `D24`)
   ke kode blok SAP (contoh `B-034`) dan menyediakan pencarian unit/VRA.
+- Format BLOCK boleh menulis plant penuh (`CM3A`/`CM9A`) atau memisahkan
+  `Company Code=CM` dan `Estate=3A/9A`; aplikasi selalu menyimpannya sebagai
+  plant penuh. Jika kolom `HA` tersedia, hanya blok dengan `HA > 0` yang aktif.
+- Gudang CMA1 dapat memilih blok inti CM3A maupun blok plasma CM9A. Master unit/VRA
+  tetap dibatasi ke plant material agar order unit SAP tidak tertukar.
 - Satu BON boleh berisi beberapa tujuan. Material yang sama boleh dibagi ke blok
   atau unit berbeda, tetapi tidak boleh diduplikasi pada tujuan yang sama.
 - Stok divalidasi terhadap jumlah seluruh pembagian material dalam satu BON.
@@ -72,8 +77,14 @@ Operator tetap dapat melanjutkan setelah melihat transaksi sebelumnya.
 - Sinkron pagi wajib berhasil pada tanggal berjalan sebelum APK membuka form
   transaksi baru. Saldo lokal hanya salinan kerja; validasi stok selalu diulang
   server saat upload.
-- Seri 0.1 hanya membuat transaksi keluar. Masuk, transfer, PR/GRN, dan
-  opname tetap memakai aplikasi web sampai modul offline berikutnya selesai.
+- APK stabil 1.0 mendukung transaksi keluar, masuk, transfer kirim/terima
+  antar-kebun, riwayat transaksi hasil sinkron, daftar stok offline, serta
+  Stock Opname bersama. PR/GRN lengkap dan rekonsiliasi SAP tetap memakai
+  aplikasi web.
+- Transfer kirim wajib memilih kebun tujuan aktif, nomor dokumen, penerima, dan
+  Foto 1 serta tidak boleh melebihi stok. Transfer terima wajib memilih kebun
+  asal aktif dan nomor dokumen; foto bersifat opsional. Kebun lawan tidak boleh
+  sama dengan plant material gudang sendiri.
 - Tombol simpan memasukkan BON dan foto ke antrean HP terlebih dahulu. Upload
   akhir hari mengirim antrean melalui alamat Tailscale laptop yang sama.
 - Setiap BON mempunyai `client_uuid`. Pengiriman berulang dengan UUID dan isi
@@ -84,8 +95,8 @@ Operator tetap dapat melanjutkan setelah melihat transaksi sebelumnya.
   antrean lokal.
 - Admin dapat menonaktifkan perangkat. Perangkat nonaktif tidak dapat memakai
   token lama atau login ulang sampai diaktifkan kembali dari panel Admin.
-- Repositori GitHub pembaruan diatur terpusat dari panel Admin. APK hanya menerima
-  aset bernama `MonitoringStok-x.y.z.apk` dari GitHub Releases tersebut.
+- Repositori GitHub pembaruan diatur terpusat dari panel Admin. APK menerima aset
+  `flowStok-x.y.z.apk` serta nama lama `MonitoringStok-x.y.z.apk` selama migrasi.
 
 ## SAP dan rekonsiliasi
 

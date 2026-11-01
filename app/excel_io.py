@@ -4,6 +4,8 @@ import re
 
 import openpyxl
 
+from .supplementary import normalize_plant
+
 MASTER_COLS = {
     "name 1": "name1",
     "material group": "material_group",
@@ -214,7 +216,7 @@ def baca_master_sap(path):
 
 
 def baca_supplementary(path):
-    """Baca master blok dan unit/VRA dari workbook Supplementary Plant Maintenance."""
+    """Baca blok berhektar dan unit/VRA dari workbook Supplementary SAP."""
     wb = _buka(path)
 
     def sheet_rows(sheet_name, required):
@@ -242,11 +244,20 @@ def baca_supplementary(path):
         block_rows = sheet_rows("BLOCK", ("estate", "division", "block", "block name", "phase"))
         if not block_rows:
             raise ExcelError("Sheet BLOCK tidak ditemukan pada file Supplementary")
+        blok_tanpa_hektar = 0
         for number, row, mapping in block_rows:
             ambil = lambda name: row[mapping[name]] if mapping[name] < len(row) else None  # noqa: E731
-            plant = teks(ambil("estate")).upper()
+            company_code = teks(ambil("company code")).upper() if "company code" in mapping else ""
+            plant = normalize_plant(ambil("estate"), company_code)
             code = teks(ambil("block name")).upper()
             sap_code = teks(ambil("block")).upper()
+            # Format baru menyertakan HA. Hanya blok nyata dengan luas positif
+            # yang boleh masuk master; baris total dan blok nol hektar dilewati.
+            if "ha" in mapping:
+                hectare = angka(ambil("ha"))
+                if hectare is None or hectare <= 0:
+                    blok_tanpa_hektar += 1
+                    continue
             if not plant or not code or not sap_code:
                 continue
             key = (plant, "blok", code)
@@ -255,6 +266,10 @@ def baca_supplementary(path):
                 "name": f"Blok {code}", "division": teks(ambil("division")),
                 "phase": teks(ambil("phase")).upper(), "source": f"BLOCK baris {number}",
             }
+        if blok_tanpa_hektar:
+            peringatan.append(
+                f"{blok_tanpa_hektar} baris blok tanpa hektar positif dilewati"
+            )
 
         vra_rows = sheet_rows("VRA ORDER", ("order", "equipment", "description", "planning plant"))
         for number, row, mapping in vra_rows:

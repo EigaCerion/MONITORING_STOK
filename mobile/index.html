@@ -3,14 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#1f6e43">
-  <title>Monitoring Stok</title>
+  <meta name="theme-color" content="#1E3A8A">
+  <link rel="icon" href="/monitoring-stok-logo.svg" type="image/svg+xml">
+  <title>flowStok</title>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand-mark" aria-hidden="true">MS</div>
-    <div><b>Monitoring Stok</b><small id="headerUser">Aplikasi Gudang</small></div>
+    <img class="brand-mark" src="/monitoring-stok-logo.svg" alt="" aria-hidden="true">
+    <div><b>flowStok</b><small id="headerUser">Aplikasi Gudang</small></div>
     <span id="netBadge" class="status-pill neutral">Memeriksa…</span>
+    <button id="settingsShortcut" class="topbar-button" type="button" aria-label="Buka pengaturan" hidden>⚙</button>
   </header>
 
   <main>
@@ -23,7 +25,7 @@
 
       <div id="setupCard" class="card" hidden>
         <h2>Hubungkan aplikasi</h2>
-        <p class="muted">Isi alamat Tailscale laptop dan login dengan akun Monitoring Stok.</p>
+        <p class="muted">Isi alamat Tailscale laptop dan login dengan akun flowStok.</p>
         <form id="loginForm">
           <label>Alamat server Tailscale
             <input id="serverUrl" type="url" inputmode="url" placeholder="http://100.x.x.x:8000" required>
@@ -46,9 +48,11 @@
       </div>
 
       <div id="summaryGrid" class="summary-grid" hidden>
-        <button class="summary-card" data-go="input"><span id="materialCount">0</span><small>Material tersedia</small></button>
+        <button class="summary-card" data-go="stock"><span id="materialCount">0</span><small>Material dalam daftar stok</small></button>
         <button class="summary-card" data-go="queue"><span id="pendingCount">0</span><small>Menunggu upload</small></button>
-        <button class="summary-card wide" data-go="returns"><span id="pendingReturnCount">0</span><small>Barang lama belum kembali</small></button>
+        <button class="summary-card" data-go="returns"><span id="pendingReturnCount">0</span><small>Barang lama belum kembali</small></button>
+        <button class="summary-card" data-go="history"><span id="serverTransactionCount">0</span><small>Transaksi server</small></button>
+        <button class="summary-card wide" data-go="opname"><span id="opnameSessionCount">0</span><small>Sesi Stock Opname aktif</small></button>
       </div>
 
       <div id="updateCard" class="card update-card" hidden>
@@ -62,6 +66,22 @@
       <div class="screen-title"><div><small>TRANSAKSI OFFLINE</small><h1 id="inputTitle">Barang keluar</h1></div><span id="draftBadge" class="status-pill neutral">Belum disimpan</span></div>
       <div id="inputLocked" class="notice warn" hidden>Sinkron pagi wajib dilakukan sebelum membuat transaksi hari ini.</div>
       <form id="transactionForm" class="stack">
+        <div class="transaction-kind" role="group" aria-label="Jenis transaksi">
+          <button type="button" class="active" data-transaction-type="keluar">↑ Barang keluar</button>
+          <button type="button" data-transaction-type="transfer">⇄ Transfer</button>
+          <button type="button" data-transaction-type="masuk">↓ Barang masuk</button>
+        </div>
+        <div id="transferFields" class="card transfer-fields" hidden>
+          <h2>Arah transfer</h2>
+          <div class="transfer-direction" role="group" aria-label="Arah transfer">
+            <button type="button" class="active" data-transfer-direction="transfer_keluar">Kirim ke kebun lain</button>
+            <button type="button" data-transfer-direction="transfer_masuk">Terima dari kebun lain</button>
+          </div>
+          <label><span id="transferGardenLabel">Kebun tujuan</span> <span class="required">*</span>
+            <select id="transferGarden"><option value="">— pilih kebun —</option></select>
+          </label>
+          <p class="hint">Daftar kebun berasal dari Sinkron pagi. Kebun gudang sendiri tidak dapat dipilih.</p>
+        </div>
         <div class="card">
           <h2>1. Barang</h2>
           <label>Cari kode atau nama material
@@ -75,24 +95,29 @@
         <div class="card">
           <h2>2. Detail BON</h2>
           <div class="form-grid">
-            <label>Nama penerima<input id="recipient" autocomplete="off" required></label>
+            <label id="recipientField">Nama penerima<input id="recipient" autocomplete="off"></label>
             <label>Tanggal<input id="transactionDate" type="date" required></label>
           </div>
-          <label for="targetSearch">Tujuan BON</label>
-          <input id="targetSearch" type="search" autocomplete="off" autocapitalize="characters"
-                 placeholder="Ketik Kantor, G17R, DT32, EX17, atau AFD 3">
-          <div id="targetResults" class="picker target-picker" hidden></div>
-          <div id="targetConfirmation" class="target-confirmation" hidden>
-            <span>✓</span><div><b id="targetConfirmationName"></b><small id="targetConfirmationDetail"></small></div>
+          <div id="outgoingTargetFields">
+            <label for="targetSearch">Tujuan BON</label>
+            <input id="targetSearch" type="search" autocomplete="off" autocapitalize="characters"
+                   placeholder="Ketik Kantor, G17R, DT32, EX17, atau AFD 3">
+            <div id="targetResults" class="picker target-picker" hidden></div>
+            <div id="targetConfirmation" class="target-confirmation" hidden>
+              <span>✓</span><div><b id="targetConfirmationName"></b><small id="targetConfirmationDetail"></small></div>
+            </div>
+            <p class="hint">Aplikasi mengenali tujuan dan menampilkannya untuk dikonfirmasi. Tujuan dapat diubah per barang.</p>
           </div>
-          <p class="hint">Aplikasi mengenali tujuan dan menampilkannya untuk dikonfirmasi. Tujuan dapat diubah per barang.</p>
+          <label id="incomingDocumentField" hidden><span id="documentLabel">Nomor dokumen / surat jalan</span> <span id="documentRequiredMark" class="required" hidden>*</span>
+            <input id="transactionDocument" autocomplete="off" placeholder="opsional, mis. GRN atau DO">
+          </label>
           <label>Keterangan<input id="note" autocomplete="off" placeholder="opsional, mis. Afd 3"></label>
         </div>
 
-        <div class="card">
-          <h2>3. Foto bukti</h2>
+        <div class="card" id="transactionPhotoCard">
+          <h2 id="photoSectionTitle">3. Foto bukti</h2>
           <div class="photo-block">
-            <b>Foto 1 — orang / penerima <span class="required">*</span></b>
+            <b><span id="photo1Label">Foto 1 — orang / penerima</span> <span id="photoRequiredMark" class="required">*</span></b>
             <div class="photo-actions">
               <label class="btn primary">Ambil foto<input id="photoCamera" type="file" accept="image/*" capture="environment" hidden></label>
               <label class="btn">Pilih galeri<input id="photoGallery" type="file" accept="image/*" hidden></label>
@@ -139,6 +164,87 @@
       <div id="returnsEmpty" class="empty-state"><b>Tidak ada pengembalian tertunda</b><p>Semua barang wajib tukar sudah memiliki catatan pengembalian.</p></div>
     </section>
 
+    <section id="screenStock" class="screen" aria-labelledby="stockTitle">
+      <div class="screen-title"><div><small>HASIL SINKRON PAGI</small><h1 id="stockTitle">Stok gudang</h1></div><span id="stockBadge" class="status-pill neutral">0 material</span></div>
+      <div class="stock-summary" aria-label="Ringkasan stok">
+        <div><span id="stockAvailableCount">0</span><small>Tersedia</small></div>
+        <div><span id="stockLowCount">0</span><small>Menipis</small></div>
+        <div><span id="stockEmptyCount">0</span><small>Habis</small></div>
+      </div>
+      <div class="card stock-tools">
+        <label>Cari kode atau nama barang
+          <input id="stockSearch" type="search" autocomplete="off" placeholder="mis. FAME, pupuk, 929.001.Z18">
+        </label>
+        <div class="form-grid">
+          <label>Status<select id="stockStatus"><option value="">Semua status</option><option value="available">Tersedia</option><option value="low">Menipis</option><option value="empty">Habis</option><option value="locked">Dikunci / expired</option></select></label>
+          <label>Urutkan<select id="stockSort"><option value="name">Nama barang</option><option value="code">Kode material</option><option value="stock_desc">Stok terbanyak</option><option value="stock_asc">Stok paling sedikit</option></select></label>
+        </div>
+        <p id="stockSyncInfo" class="hint">Lakukan Sinkron pagi untuk memperbarui saldo.</p>
+      </div>
+      <div id="stockList" class="stock-list"></div>
+      <div id="stockEmpty" class="empty-state"><b>Material tidak ditemukan</b><p>Ubah pencarian atau lakukan Sinkron pagi.</p></div>
+    </section>
+
+    <section id="screenHistory" class="screen" aria-labelledby="historyTitle">
+      <div class="screen-title"><div><small>RIWAYAT SERVER</small><h1 id="historyTitle">Barang keluar, masuk & transfer</h1></div><span id="historyBadge" class="status-pill neutral">0 BON</span></div>
+      <div class="card">
+        <label>Cari BON, material, penerima, tujuan, atau dokumen SAP
+          <input id="historySearch" type="search" autocomplete="off" placeholder="mis. BON-261029, FAME, Bobi, DT32">
+        </label>
+        <div class="form-grid">
+          <label>Jenis<select id="historyType"><option value="">Semua transaksi</option><option value="keluar">Barang keluar</option><option value="masuk">Barang masuk</option><option value="transfer_keluar">Transfer keluar</option><option value="transfer_masuk">Transfer masuk</option></select></label>
+          <label>Status SAP<select id="historyStatus"><option value="">Semua status</option><option value="pending">Belum posting SAP</option><option value="posted">Sudah posting SAP</option><option value="cancelled">Dibatalkan</option></select></label>
+        </div>
+        <p class="hint">Riwayat berasal dari Sinkron pagi dan tetap dapat dibuka tanpa sinyal.</p>
+      </div>
+      <div id="historyList" class="queue-list"></div>
+      <div id="historyEmpty" class="empty-state"><b>Transaksi tidak ditemukan</b><p>Ubah kata pencarian atau lakukan Sinkron pagi.</p></div>
+      <div id="historySelectionBar" class="card selection-bar" hidden>
+        <b><span id="historySelectionCount">0</span> transaksi dipilih</b>
+        <div class="queue-actions"><button id="mergeBonButton" class="btn primary" type="button">Satukan jadi 1 BON</button><button id="splitBonButton" class="btn" type="button">Pisahkan ke BON baru</button><button id="clearBonSelection" class="btn" type="button">Batal pilih</button></div>
+      </div>
+    </section>
+
+    <section id="screenOpname" class="screen" aria-labelledby="opnameTitle">
+      <div class="screen-title"><div><small>HITUNG BERSAMA</small><h1 id="opnameTitle">Stock Opname</h1></div><span id="opnameBadge" class="status-pill neutral">Belum ada sesi</span></div>
+      <div id="opnameNoSession" class="card">
+        <h2>Belum ada sesi opname aktif</h2>
+        <p class="muted">Lakukan Sinkron pagi. Admin atau petugas yang mendapat delegasi dapat membuka sesi baru saat server terhubung.</p>
+        <form id="opnameStartForm" hidden>
+          <label id="opnamePlantField">Gudang<select id="opnamePlant"><option value="">— pilih gudang —</option></select></label>
+          <div class="form-grid">
+            <label>Jenis barang<input id="opnameItemType" autocomplete="off" placeholder="mis. PUPUK atau UMUM"></label>
+            <label>Tanggal<input id="opnameDate" type="date"></label>
+          </div>
+          <label>Lokasi<input id="opnameLocation" autocomplete="off" placeholder="mis. Gudang CMA1"></label>
+          <label>Keterangan<input id="opnameNote" autocomplete="off" placeholder="opsional"></label>
+          <button class="btn primary block" type="submit">Buka sesi opname</button>
+        </form>
+      </div>
+      <div id="opnameActive" hidden>
+        <div class="card">
+          <label id="opnameSessionPickerField" hidden>Sesi aktif<select id="opnameSessionPicker"></select></label>
+          <div class="card-head"><div><small id="opnameSessionMeta"></small><h2 id="opnameSessionName"></h2></div><span id="opnameProgress" class="round-state">0</span></div>
+          <p id="opnameSessionNote" class="muted"></p>
+          <div id="opnameMembers" class="stock-flags"></div>
+        </div>
+        <div class="notice warn">Hitungan disimpan dahulu di HP. Material yang sudah dihitung anggota lain akan ditolak server agar tidak tertimpa.</div>
+        <div class="card stock-tools">
+          <label>Cari material yang akan dihitung
+            <input id="opnameSearch" type="search" autocomplete="off" placeholder="Ketik kode atau nama; hasil langsung muncul di atas">
+          </label>
+          <label class="check-row"><input id="opnameUncountedOnly" type="checkbox" checked> Tampilkan yang belum dihitung saja</label>
+        </div>
+        <div id="opnameMaterialList" class="stock-list"></div>
+        <div id="opnameMaterialEmpty" class="empty-state"><b>Material tidak ditemukan</b><p>Ubah pencarian atau matikan filter belum dihitung.</p></div>
+        <div id="opnameCloseCard" class="card" hidden>
+          <h2>Tutup sesi opname</h2>
+          <div class="notice warn"><b>Menutup sesi akan menyelesaikan opname dan menyesuaikan stok.</b><br>Pastikan seluruh anggota sudah memposting hitungannya.</div>
+          <button id="openOpnameClose" class="btn danger block" type="button">Periksa dan tutup sesi</button>
+        </div>
+      </div>
+    </section>
+
     <section id="screenSettings" class="screen" aria-labelledby="settingsTitle">
       <div class="screen-title"><div><small>PENGATURAN</small><h1 id="settingsTitle">Perangkat dan aplikasi</h1></div><span id="appVersion" class="status-pill neutral"></span></div>
       <div class="card">
@@ -160,11 +266,12 @@
     </section>
   </main>
 
-  <nav class="bottom-nav" aria-label="Menu utama">
+  <nav id="mainNav" class="bottom-nav" aria-label="Menu utama" hidden>
     <button class="active" data-screen="home"><span>⌂</span>Beranda</button>
     <button data-screen="input"><span>＋</span>Input</button>
+    <button data-screen="stock"><span>▤</span>Stok</button>
+    <button data-screen="history"><span>◷</span>Histori</button>
     <button data-screen="queue"><span>⇧</span>Upload</button>
-    <button data-screen="settings"><span>⚙</span>Pengaturan</button>
   </nav>
 
   <dialog id="targetDialog">
@@ -199,6 +306,80 @@
         </div>
         <button class="btn primary block" type="submit">Simpan ke antrean HP</button>
       </form>
+    </div>
+  </dialog>
+  <dialog id="historyPhotoDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>FOTO TRANSAKSI</small><h2 id="historyPhotoTitle">Tambahkan foto</h2></div><button id="historyPhotoClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <p id="historyPhotoInfo" class="muted"></p>
+      <div class="photo-actions">
+        <label class="btn primary">Ambil foto<input id="historyPhotoCamera" type="file" accept="image/*" capture="environment" hidden></label>
+        <label class="btn">Pilih galeri<input id="historyPhotoGallery" type="file" accept="image/*" hidden></label>
+      </div>
+      <img id="historyPhotoPreview" class="photo-preview" alt="Pratinjau foto transaksi" hidden>
+      <button id="historyPhotoSave" class="btn primary block" type="button" disabled>Simpan ke antrean HP</button>
+    </div>
+  </dialog>
+  <dialog id="cancelDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>PEMBATALAN TRANSAKSI</small><h2 id="cancelDialogTitle">Batalkan barang keluar</h2></div><button id="cancelDialogClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <div id="cancelStockNotice" class="notice warn"><b>Stok akan dikembalikan ke server.</b><br>Jika transaksi sudah direalisasikan di SAP, dokumen SAP juga harus dibatalkan atau di-reverse.</div>
+      <p id="cancelDialogInfo" class="muted"></p>
+      <label>Alasan pembatalan<textarea id="cancelReason" rows="3" maxlength="300" placeholder="Wajib diisi, jelaskan kesalahan transaksi"></textarea></label>
+      <button id="cancelConfirm" class="btn danger block" type="button">Ya, batalkan transaksi</button>
+    </div>
+  </dialog>
+  <dialog id="cancelReturnDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>PEMBATALAN PENGEMBALIAN</small><h2 id="cancelReturnTitle">Batalkan catatan barang lama</h2></div><button id="cancelReturnClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <div class="notice warn"><b>Catatan akan dibuka kembali sebagai “belum kembali”.</b><br>Tindakan ini tidak mengubah stok gudang karena barang lama hanya dicatat sebagai bukti tukar.</div>
+      <p id="cancelReturnInfo" class="muted"></p>
+      <label>Alasan pembatalan<textarea id="cancelReturnReason" rows="3" maxlength="300" placeholder="Wajib diisi, mis. foto atau barang yang dicatat salah"></textarea></label>
+      <button id="cancelReturnConfirm" class="btn danger block" type="button">Ya, batalkan catatan pengembalian</button>
+    </div>
+  </dialog>
+  <dialog id="editTransactionDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>EDIT DETAIL BON</small><h2 id="editTransactionTitle">Perbaiki transaksi</h2></div><button id="editTransactionClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <label><span id="editRecipientLabel">Nama penerima</span><input id="editRecipient" autocomplete="off"></label>
+      <label>Keterangan<input id="editNote" autocomplete="off"></label>
+      <label>Nomor dokumen<input id="editDocument" autocomplete="off"></label>
+      <label class="check-row"><input id="editWholeBon" type="checkbox" checked> Terapkan ke seluruh barang dalam BON yang sama</label>
+      <button id="editTransactionSave" class="btn primary block" type="button">Simpan perubahan</button>
+    </div>
+  </dialog>
+  <dialog id="postingDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>STATUS SAP</small><h2 id="postingDialogTitle">Posting seluruh BON</h2></div><button id="postingDialogClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <p id="postingDialogInfo" class="muted"></p>
+      <label>Nomor dokumen SAP<input id="postingDocument" autocomplete="off" placeholder="opsional"></label>
+      <button id="postingConfirm" class="btn primary block" type="button">Tandai sudah posting SAP</button>
+    </div>
+  </dialog>
+  <dialog id="correctionDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>KOREKSI QTY</small><h2 id="correctionTitle">Koreksi transaksi</h2></div><button id="correctionClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <div class="notice warn">Koreksi langsung mengubah saldo stok server. Jika sudah posting SAP, qty pada SAP juga harus dikoreksi.</div>
+      <p id="correctionInfo" class="muted"></p>
+      <label>Qty yang benar<input id="correctionQty" inputmode="decimal"></label>
+      <label>Alasan koreksi<textarea id="correctionReason" rows="3" maxlength="300" placeholder="Wajib diisi"></textarea></label>
+      <button id="correctionSave" class="btn danger block" type="button">Simpan koreksi qty</button>
+    </div>
+  </dialog>
+  <dialog id="photoViewerDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>BUKTI TRANSAKSI</small><h2 id="photoViewerTitle">Foto transaksi</h2></div><button id="photoViewerClose" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <p id="photoViewerLoading" class="muted">Mengambil foto dari server…</p>
+      <img id="photoViewerImage" class="photo-preview photo-full" alt="Foto bukti transaksi" hidden>
+    </div>
+  </dialog>
+  <dialog id="opnameCloseDialog">
+    <div class="dialog-card">
+      <div class="dialog-head"><div><small>PENUTUPAN OPNAME</small><h2>Selesaikan sesi</h2></div><button id="opnameCloseDialogButton" class="icon-button" type="button" aria-label="Tutup">×</button></div>
+      <div class="notice warn"><b>Stok akan langsung disesuaikan dengan hitungan fisik.</b><br>Tindakan ini menyelesaikan dan mengunci sesi opname.</div>
+      <div id="opnameCloseMembers" class="stock-flags"></div>
+      <label class="check-row"><input id="opnameConfirmAll" type="checkbox"> Saya sudah memastikan semua anggota selesai dan seluruh antrean hitungan sudah di-upload.</label>
+      <button id="opnameCloseConfirm" class="btn danger block" type="button" disabled>Ya, tutup dan sesuaikan stok</button>
     </div>
   </dialog>
   <dialog id="messageDialog">

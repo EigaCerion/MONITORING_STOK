@@ -1,4 +1,4 @@
-# Arsitektur Monitoring Stok
+# Arsitektur flowStok
 
 Dokumen ini adalah peta teknis aplikasi. Mulai dari sini sebelum mengubah kode.
 

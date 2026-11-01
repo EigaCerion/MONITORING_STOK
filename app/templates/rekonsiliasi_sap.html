@@ -61,25 +61,50 @@
     {% if stats.cocok or stats.gabung or stats.baru or stats.verifikasi or stats.verifikasi_ulang %}<button form="formRekon" class="btn primary">Simpan pilihan</button>{% endif %}
   </div>
   <form method="post" action="{{ url_for('admin.rekonsiliasi_sap_konfirmasi') }}" id="formRekon"
+        data-rekon-token="{{ token }}"
         data-confirm="Simpan pasangan dan transaksi baru yang dicentang? Saldo material terkait akan disesuaikan kembali ke MB52.">
     <input type="hidden" name="_csrf" value="{{ csrf }}"><input type="hidden" name="token" value="{{ token }}">
   </form>
+  <div class="rekon-toolbar" aria-label="Alat bantu pemilihan rekonsiliasi">
+    <div class="field grow"><label for="rekonCari">Cari baris, dokumen, atau material</label>
+      <input id="rekonCari" type="search" placeholder="Contoh: 82, 4902463151, atau 922.001.073"></div>
+    <div class="field"><label for="rekonStatus">Tampilkan status</label>
+      <select id="rekonStatus"><option value="">Semua status</option><option value="cocok">Cocok otomatis</option>
+        <option value="gabung">Gabungan</option><option value="baru">Transaksi baru</option>
+        <option value="verifikasi">Perlu verifikasi</option><option value="ambigu">Ambigu</option>
+        <option value="tidak_ada">Tidak ditemukan</option></select></div>
+    <div class="rekon-bulk">
+      <button type="button" class="btn" id="rekonPilihAman">Pilih semua yang aman</button>
+      <button type="button" class="btn" id="rekonPilihLengkap">Pilih keputusan lengkap</button>
+      <button type="button" class="btn" id="rekonKosongkan">Kosongkan</button>
+    </div>
+    <div class="rekon-counter"><b><span id="rekonTerpilih">0</span> dipilih</b><small id="rekonTerlihat"></small></div>
+    <small class="muted rekon-help">Pilihan tersimpan otomatis di perangkat ini. “Pilih semua yang aman” hanya mencentang pasangan otomatis yang tidak membutuhkan keputusan arah.</small>
+  </div>
   <div class="tbl-wrap" style="margin-top:.75rem">
   <table class="tbl tbl-cards kartu-rekon">
     <thead><tr><th></th><th>Baris</th><th>Tanggal</th><th>Dokumen SAP</th><th>MvT / Lokasi</th><th>Material SAP</th>
       <th class="num">Qty SAP</th><th>Pasangan aplikasi</th><th>Verifikasi arah</th><th>Status</th></tr></thead>
     <tbody>
     {% for r in rows %}
-      <tr class="{{ 'wrn' if r.status in ('ambigu','tidak_ada','verifikasi','verifikasi_ulang') or (r.perlu_verifikasi_transfer and r.status in ('cocok','gabung','baru')) }}">
-        <td class="c-cek">{% if r.status == 'cocok' and not r.plant_tujuan_tidak_ada %}<input form="formRekon" type="checkbox" name="matches" value="{{ loop.index0 }}" {{ '' if r.perlu_verifikasi_transfer or r.beda_plant else 'checked' }}
+      {% set wajib_arah = r.perlu_verifikasi_transfer and not r.flow_chain_role and r.flow_pair_role != 'receipt' and (r.status in ('cocok','baru','verifikasi','verifikasi_ulang') or (r.status == 'gabung' and r.group_lead)) %}
+      {% set terpilih_lama = form_state and loop.index0 in form_state.selected %}
+      <tr id="rekon-row-{{ loop.index0 }}" data-rekon-row data-status="{{ r.status }}"
+          data-search="{{ r._baris }} {{ r.sap_doc }} {{ r.material }} {{ r.deskripsi }} {{ r.teks_sap or '' }}"
+          class="{{ 'rekon-error' if error_indices and loop.index0 in error_indices }} {{ 'wrn' if r.status in ('ambigu','tidak_ada','verifikasi','verifikasi_ulang') or wajib_arah }}">
+        <td class="c-cek">{% if r.status == 'cocok' and not r.plant_tujuan_tidak_ada %}<input form="formRekon" type="checkbox" name="matches" value="{{ loop.index0 }}"
+          data-rekon-safe="{{ 0 if wajib_arah or r.beda_plant else 1 }}"
+          {{ 'checked' if terpilih_lama or (not form_state and not wajib_arah and not r.beda_plant) else '' }}
           aria-label="Pilih pasangan baris {{ r._baris }}">
-          {% elif r.status == 'gabung' and r.group_lead %}<input form="formRekon" type="checkbox" name="matches" value="{{ loop.index0 }}" {{ '' if r.perlu_verifikasi_transfer or r.flow_target_group else 'checked' }}
+          {% elif r.status == 'gabung' and r.group_lead %}<input form="formRekon" type="checkbox" name="matches" value="{{ loop.index0 }}"
+          data-rekon-safe="{{ 0 if wajib_arah or r.flow_target_group else 1 }}"
+          {{ 'checked' if terpilih_lama or (not form_state and not wajib_arah and not r.flow_target_group) else '' }}
           aria-label="Pilih gabungan mulai baris {{ r._baris }}">
-          {% elif r.status == 'baru' %}<input form="formRekon" type="checkbox" name="news" value="{{ loop.index0 }}"
+          {% elif r.status == 'baru' %}<input form="formRekon" type="checkbox" name="news" value="{{ loop.index0 }}" {{ 'checked' if terpilih_lama else '' }}
           aria-label="Tambah transaksi baru dari baris {{ r._baris }}">
-          {% elif r.status == 'verifikasi' %}<input form="formRekon" type="checkbox" name="reviews" value="{{ loop.index0 }}"
+          {% elif r.status == 'verifikasi' %}<input form="formRekon" type="checkbox" name="reviews" value="{{ loop.index0 }}" {{ 'checked' if terpilih_lama else '' }}
           aria-label="Verifikasi transit baris {{ r._baris }}">
-          {% elif r.status == 'verifikasi_ulang' %}<input form="formRekon" type="checkbox" name="reviews" value="{{ loop.index0 }}"
+          {% elif r.status == 'verifikasi_ulang' %}<input form="formRekon" type="checkbox" name="reviews" value="{{ loop.index0 }}" {{ 'checked' if terpilih_lama else '' }}
           aria-label="Verifikasi ulang transfer baris {{ r._baris }}">{% endif %}</td>
         <td class="c-row" data-label="Baris">{{ r._baris }}</td><td class="nowrap c-tgl">{{ r.tanggal|tgl }}</td>
         <td class="c-dok"><b>{{ r.sap_doc }}</b><br><small>{{ r.teks_sap or r.purchase_order }}</small></td>
@@ -115,21 +140,22 @@
             <span class="muted">Mengikuti verifikasi transfer pada baris {{ r.flow_pair_source_row }}</span>
           {% elif r.status == 'reversal' %}
             <span class="muted">MvT {{ r.movement_type }} berpasangan dengan dokumen {{ r.reversal_pair_doc }}</span>
-          {% elif r.perlu_verifikasi_transfer and r.status in ('cocok','baru','verifikasi','verifikasi_ulang') or (r.perlu_verifikasi_transfer and r.status == 'gabung' and r.group_lead) %}
+          {% elif wajib_arah %}
+            {% set arah_lama = form_state.arah.get(loop.index0, '') if form_state else '' %}
             <div class="rekon-arah" data-rekon-arah>
               <label class="req" for="arah_{{ loop.index0 }}">Keputusan operator</label>
               <select form="formRekon" id="arah_{{ loop.index0 }}" name="arah_{{ loop.index0 }}" data-arah>
                 <option value="">Pilih arah…</option>
-                {% if r.status in ('baru','verifikasi') %}<option value="transit">Masih transit — belum masuk ST01</option>{% endif %}
+                {% if r.status in ('baru','verifikasi') %}<option value="transit" {{ 'selected' if arah_lama == 'transit' }}>Masih transit — belum masuk ST01</option>{% endif %}
                 {% if r.status != 'verifikasi' and r.qty > 0 %}
-                  <option value="masuk_store">Masuk ST01 / Store</option>
-                  <option value="transfer_masuk">Transfer masuk dari kebun lain</option>
+                  <option value="masuk_store" {{ 'selected' if arah_lama == 'masuk_store' }}>Masuk ST01 / Store</option>
+                  <option value="transfer_masuk" {{ 'selected' if arah_lama == 'transfer_masuk' }}>Transfer masuk dari kebun lain</option>
                 {% elif r.status != 'verifikasi' %}
-                  <option value="keluar_store">Keluar dari ST01 / Store</option>
-                  <option value="transfer_keluar">Transfer keluar ke kebun lain</option>
+                  <option value="keluar_store" {{ 'selected' if arah_lama == 'keluar_store' }}>Keluar dari ST01 / Store</option>
+                  <option value="transfer_keluar" {{ 'selected' if arah_lama == 'transfer_keluar' }}>Transfer keluar ke kebun lain</option>
                 {% endif %}
               </select>
-              <input form="formRekon" name="pihak_{{ loop.index0 }}" data-pihak placeholder="Nama/kode kebun asal atau tujuan">
+              <input form="formRekon" name="pihak_{{ loop.index0 }}" data-pihak value="{{ form_state.pihak.get(loop.index0, '') if form_state else '' }}" placeholder="Nama/kode kebun asal atau tujuan">
               <small data-arah-hint>{% if r.transfer_pair %}Pasangan SAP terdeteksi: {{ r.transfer_dari }} → {{ r.transfer_ke }} (PO {{ r.purchase_order }}). Tetap pilih arah untuk verifikasi.{% else %}Pilih arah sebelum mencentang dan menyimpan.{% endif %}</small>
             </div>
           {% elif r.status == 'ditinjau' %}

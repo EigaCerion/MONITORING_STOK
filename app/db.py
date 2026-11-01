@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS materials (
     ada_di_sap         INTEGER NOT NULL DEFAULT 1,
     kategori_id        INTEGER REFERENCES kategori(id),
     stok_minimum       REAL NOT NULL DEFAULT 0,
+    lokasi_blok        TEXT,
     expired            INTEGER NOT NULL DEFAULT 0,
     expired_at         TEXT,
     input_locked       INTEGER NOT NULL DEFAULT 0,
@@ -142,6 +143,21 @@ CREATE TABLE IF NOT EXISTS mobile_submissions (
 );
 CREATE INDEX IF NOT EXISTS ix_mobile_submissions_device
     ON mobile_submissions(device_id, received_at);
+
+-- Hitungan opname dari APK juga idempoten. Satu UUID dapat memuat beberapa
+-- material dan retry hanya mengembalikan hasil lama.
+CREATE TABLE IF NOT EXISTS mobile_opname_submissions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_uuid TEXT NOT NULL UNIQUE,
+    device_id   INTEGER NOT NULL REFERENCES mobile_devices(id),
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    session_id  INTEGER NOT NULL REFERENCES opname_sesi(id),
+    payload_hash TEXT NOT NULL,
+    material_ids TEXT NOT NULL,
+    received_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS ix_mobile_opname_submissions_session
+    ON mobile_opname_submissions(session_id, received_at);
 
 CREATE TABLE IF NOT EXISTS mobile_sync_log (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,6 +265,9 @@ CREATE TABLE IF NOT EXISTS pengembalian (
     foto              TEXT,
     dikembalikan_oleh TEXT,
     batal             INTEGER NOT NULL DEFAULT 0,
+    batal_alasan      TEXT,
+    batal_by          INTEGER REFERENCES users(id),
+    batal_at          TEXT,
     created_by        INTEGER REFERENCES users(id),
     created_at        TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -268,6 +287,21 @@ CREATE TABLE IF NOT EXISTS mobile_return_submissions (
 );
 CREATE INDEX IF NOT EXISTS ix_mobile_return_submissions_device
     ON mobile_return_submissions(device_id, received_at);
+
+-- Foto transaksi yang dilampirkan kemudian dari APK memakai UUID idempoten.
+CREATE TABLE IF NOT EXISTS mobile_photo_submissions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_uuid    TEXT NOT NULL UNIQUE,
+    device_id      INTEGER NOT NULL REFERENCES mobile_devices(id),
+    user_id        INTEGER NOT NULL REFERENCES users(id),
+    transaction_id INTEGER NOT NULL REFERENCES transactions(id),
+    slot           INTEGER NOT NULL CHECK(slot IN (1,2)),
+    filename       TEXT NOT NULL,
+    payload_hash   TEXT NOT NULL,
+    received_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS ix_mobile_photo_submissions_device
+    ON mobile_photo_submissions(device_id, received_at);
 
 -- Penghitung nomor dokumen (mis. bon per hari). Nomor tidak pernah dipakai ulang walau bon digabung.
 CREATE TABLE IF NOT EXISTS penomoran (
@@ -432,6 +466,10 @@ MIGRASI = [
     ("materials", "expired_at", "TEXT"),                            # tanggal kedaluwarsa (opsional)
     ("materials", "input_locked", "INTEGER NOT NULL DEFAULT 0"),    # blokir pemakaian kode untuk input baru
     ("materials", "input_lock_reason", "TEXT"),                     # alasan yang ditampilkan ke operator
+    ("materials", "lokasi_blok", "TEXT"),                           # blok/rak penyimpanan fisik di gudang
+    ("pengembalian", "batal_alasan", "TEXT"),                      # alasan pembatalan bukti barang lama
+    ("pengembalian", "batal_by", "INTEGER REFERENCES users(id)"), # admin yang membatalkan
+    ("pengembalian", "batal_at", "TEXT"),                          # waktu pembatalan
     ("opname_sesi", "plant", "TEXT"),                              # gudang untuk sesi hitung bersama
     ("opname_sesi", "status", "TEXT NOT NULL DEFAULT 'selesai'"),  # terbuka / selesai
     ("opname_sesi", "closed_by", "INTEGER REFERENCES users(id)"),

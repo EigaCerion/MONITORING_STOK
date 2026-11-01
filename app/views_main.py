@@ -12,10 +12,12 @@ from .auth import login_required
 from . import pengembalian
 from .db import audit, delegasi_opname_aktif, get_db, opname_aktif, pengaturan, tx
 from .excel_io import angka
+from .mobile_release import APK_DIR, apk_info, latest_stable_apk
 from .photos import save_photo
 from .report import excel_tabel
 from .stock import (ALASAN_PENYESUAIAN, ALASAN_SAP, JENIS_LABEL, target_sap, EPS, StockError, batalkan_transaksi, bulat, cari_kebun, efek, fmt,
                     nomor_bon, sesuaikan_stok, simpan_transaksi, stok_material, ubah_qty_transaksi, validasi)
+from .supplementary import target_plants
 
 bp = Blueprint("main", __name__)
 PER_HAL = 100
@@ -95,6 +97,32 @@ def halaman():
         return max(1, int(request.args.get("hal", 1)))
     except ValueError:
         return 1
+
+
+@bp.get("/unduh-aplikasi")
+@login_required("admin", "petugas")
+def unduh_aplikasi():
+    """Pusat unduh dan panduan APK untuk Admin serta Petugas Gudang."""
+    apk = latest_stable_apk()
+    settings = pengaturan(get_db())
+    return render_template(
+        "unduh_aplikasi.html",
+        apk=apk_info(apk),
+        github_repo=settings.get("mobile_github_repo", ""),
+    )
+
+
+@bp.get("/unduh-aplikasi/apk")
+@login_required("admin", "petugas")
+def unduh_aplikasi_apk():
+    """Unduh APK stabil terbaru langsung dari laptop server."""
+    apk = latest_stable_apk()
+    if not apk:
+        abort(404)
+    return send_from_directory(
+        APK_DIR, apk.name, as_attachment=True,
+        mimetype="application/vnd.android.package-archive",
+    )
 
 
 # ------------------------------------------------------------------ dashboard
@@ -223,9 +251,12 @@ def _cocokkan_tujuan_master(db, plant, tujuan):
     master_type = "blok" if tipe == "damkar" else tipe
     if master_type not in {"blok", "unit"}:
         return tujuan, []
+    plants = target_plants(plant, master_type)
+    marks = ",".join("?" for _ in plants)
     ada_master = db.execute(
-        "SELECT 1 FROM supplementary_targets WHERE plant = ? AND target_type = ? AND active = 1 LIMIT 1",
-        (plant, master_type),
+        f"SELECT 1 FROM supplementary_targets WHERE plant IN ({marks}) "
+        "AND target_type = ? AND active = 1 LIMIT 1",
+        (*plants, master_type),
     ).fetchone()
     if not ada_master:
         return tujuan, []
@@ -233,10 +264,11 @@ def _cocokkan_tujuan_master(db, plant, tujuan):
     if master_type == "unit" and re.fullmatch(r"EX\d+", re.sub(r"[\s-]+", "", kode)):
         kode = "EXA" + re.sub(r"[\s-]+", "", kode)[2:]
     row = db.execute(
-        """SELECT code, sap_code FROM supplementary_targets
-           WHERE plant = ? AND target_type = ? AND active = 1
-             AND (UPPER(code) = ? OR UPPER(sap_code) = ?) LIMIT 1""",
-        (plant, master_type, kode, kode),
+        f"""SELECT code, sap_code FROM supplementary_targets
+            WHERE plant IN ({marks}) AND target_type = ? AND active = 1
+              AND (UPPER(code) = ? OR UPPER(sap_code) = ?)
+            ORDER BY CASE WHEN plant = ? THEN 0 ELSE 1 END LIMIT 1""",
+        (*plants, master_type, kode, kode, plant),
     ).fetchone()
     if not row:
         return tujuan, [f"{TUJUAN_LABEL.get(tipe, 'Tujuan')} '{tujuan.get('kode', '')}' tidak terdaftar di Master Supplementary"]
@@ -609,8 +641,22 @@ def api_tujuan():
 
     args, where = [], ["active = 1"]
     if plant:
-        where.append("plant = ?")
-        args.append(plant)
+        if target_type == "blok":
+            plants = target_plants(plant, "blok")
+            marks = ",".join("?" for _ in plants)
+            where.append(f"plant IN ({marks})")
+            args.extend(plants)
+        elif target_type == "unit":
+            where.append("plant = ?")
+            args.append(plant)
+        else:
+            block_plants = target_plants(plant, "blok")
+            marks = ",".join("?" for _ in block_plants)
+            where.append(
+                f"((target_type = 'blok' AND plant IN ({marks})) "
+                "OR (target_type = 'unit' AND plant = ?))"
+            )
+            args.extend((*block_plants, plant))
     if target_type in {"blok", "unit"}:
         where.append("target_type = ?")
         args.append(target_type)
@@ -667,8 +713,8 @@ def _query_stok(args, limit=True):
     where, prm = "1=1" + fk, list(fa)
     q = args.get("q", "").strip()
     for kata in q.split()[:5]:
-        where += " AND (v.material LIKE ? OR v.deskripsi LIKE ? OR v.material_group LIKE ?)"
-        prm += [f"%{kata}%"] * 3
+        where += " AND (v.material LIKE ? OR v.deskripsi LIKE ? OR v.material_group LIKE ? OR v.lokasi_blok LIKE ?)"
+        prm += [f"%{kata}%"] * 4
     if args.get("kebun"):
         where += " AND v.plant = ?"
         prm.append(args["kebun"])
@@ -678,6 +724,12 @@ def _query_stok(args, limit=True):
     elif kat:
         where += " AND v.kategori_id = ?"
         prm.append(int(kat))
+    blok = args.get("blok", "").strip()
+    if blok == "none":
+        where += " AND TRIM(COALESCE(v.lokasi_blok, '')) = ''"
+    elif blok:
+        where += " AND UPPER(v.lokasi_blok) = UPPER(?)"
+        prm.append(blok)
     st = args.get("status", "")
     if st == "menipis":
         where += " AND v.stok_minimum > 0 AND v.stok <= v.stok_minimum"
@@ -706,10 +758,44 @@ def stok():
     """Tampilkan daftar stok berjalan dengan status SAP, minimum, dan expired."""
     rows, total = _query_stok(request.args)
     db = get_db()
+    fk, fa = filter_kebun_user("m")
+    blok = [r[0] for r in db.execute(
+        f"""SELECT DISTINCT lokasi_blok FROM materials m
+            WHERE TRIM(COALESCE(lokasi_blok, '')) <> '' {fk}
+            ORDER BY lokasi_blok""", fa
+    ).fetchall()]
     return render_template("stok.html", rows=rows, total=total, hal=halaman(), per_hal=PER_HAL,
                            kategori=db.execute("SELECT * FROM kategori ORDER BY urutan").fetchall(),
                            kebun=db.execute("SELECT * FROM kebun ORDER BY nama").fetchall(),
-                           alasan=ALASAN_PENYESUAIAN, hari_ini=hari_ini())
+                           blok=blok, alasan=ALASAN_PENYESUAIAN, hari_ini=hari_ini())
+
+
+@bp.route("/stok/<int:mid>/blok", methods=["POST"])
+@login_required("admin")
+def atur_blok_stok(mid):
+    """Tetapkan blok/rak penyimpanan material tanpa mengubah saldo stok."""
+    db = get_db()
+    m = material_boleh(mid) or abort(404)
+    lokasi = _norm_duplikat(request.form.get("lokasi_blok"))
+    if len(lokasi) > 30:
+        pesan = "Nama blok maksimal 30 karakter"
+        if wants_json():
+            return jsonify(ok=False, pesan=pesan), 400
+        flash(pesan, "error")
+        return redirect(kembali(url_for("main.stok")))
+    lama = (m["lokasi_blok"] or "").strip()
+    with tx(db):
+        db.execute(
+            "UPDATE materials SET lokasi_blok = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+            (lokasi or None, mid),
+        )
+        audit(db, g.user["id"], "ubah_blok_stok",
+              f"material_id={mid} {m['material']} blok {lama or '-'} -> {lokasi or '-'}")
+    pesan = f"Blok penyimpanan {m['material']} diubah menjadi {lokasi or 'belum diatur'}"
+    if wants_json():
+        return jsonify(ok=True, pesan=pesan, blok=lokasi)
+    flash(pesan, "ok")
+    return redirect(kembali(url_for("main.stok")))
 
 
 @bp.route("/stok/export")
@@ -717,19 +803,19 @@ def stok():
 def export_stok():
     """Export daftar stok sesuai filter aktif menjadi workbook Excel."""
     rows, _ = _query_stok(request.args, limit=False)
-    data = [[m["kebun_nama"], m["kategori"] or "", m["material_group"], m["material"], m["deskripsi"],
+    data = [[m["kebun_nama"], m["kategori"] or "", m["lokasi_blok"] or "", m["material_group"], m["material"], m["deskripsi"],
              m["special_stock"], m["satuan"], m["stok"], m["sap_unrestricted"], m["tunggu_sap"],
              m["sap_perkiraan"], m["pending_rutin"], m["selisih_fisik"], m["selisih_nyata"],
              m["stok_minimum"] or None, "YA" if material_expired(m) else "", m["expired_at"],
              "YA" if material_input_locked(m) else "", m["input_lock_reason"],
              m["sap_updated_at"]] for m in rows]
-    header = ["Kebun", "Kategori", "Group", "Material", "Deskripsi", "Sp.Stock", "Satuan", "Stok Aplikasi",
+    header = ["Kebun", "Kategori", "Blok Penyimpanan", "Group", "Material", "Deskripsi", "Sp.Stock", "Satuan", "Stok Aplikasi",
               "Stok File SAP", "Diinput SAP setelah file", "SAP Perkiraan", "Trx Harian Belum Diinput SAP",
               "Selisih Fisik Belum Disesuaikan SAP", "Selisih Nyata", "Stok Minimum", "Expired", "Tanggal Expired",
               "Input Dikunci", "Alasan Kunci", "File SAP per"]
     num = "#,##0.###"
-    return excel_tabel("Stok", header, data, [20, 16, 8, 14, 38, 8, 7, 13, 13, 13, 13, 14, 16, 12, 11, 9, 13, 11, 36, 18],
-                       f"Stok_{hari_ini()}.xlsx", {j: num for j in range(8, 16)})
+    return excel_tabel("Stok", header, data, [20, 16, 12, 8, 14, 38, 8, 7, 13, 13, 13, 13, 14, 16, 12, 11, 9, 13, 11, 36, 18],
+                       f"Stok_{hari_ini()}.xlsx", {j: num for j in range(9, 17)})
 
 
 @bp.route("/stok/<int:mid>/sesuaikan", methods=["POST"])
@@ -1139,9 +1225,15 @@ def batal_kembali(pid):
     p = db.execute("SELECT * FROM pengembalian WHERE id = ? AND batal = 0", (pid,)).fetchone()
     if not p or not material_boleh(p["material_id"]):
         abort(404)
+    alasan = request.form.get("alasan", "").strip() or "Dibatalkan dari web"
     with tx(db):
-        db.execute("UPDATE pengembalian SET batal = 1 WHERE id = ?", (pid,))
-        audit(db, g.user["id"], "batal_pengembalian", f"pengembalian#{pid} trx#{p['transaksi_id']}")
+        db.execute(
+            """UPDATE pengembalian SET batal=1,batal_alasan=?,batal_by=?,
+                      batal_at=datetime('now','localtime') WHERE id=?""",
+            (alasan, g.user["id"], pid),
+        )
+        audit(db, g.user["id"], "batal_pengembalian",
+              f"pengembalian#{pid} trx#{p['transaksi_id']}; {alasan}")
     flash("Catatan pengembalian dibatalkan", "ok")
     return redirect(kembali(url_for("main.daftar_kembali")))
 

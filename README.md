@@ -1,4 +1,4 @@
-# Monitoring Stok
+# flowStok
 
 Aplikasi web untuk memantau stok gudang kebun: input transaksi lewat HP (dengan foto bukti), import Excel,
 master dari export SAP, edit qty manual untuk selisih fisik/SAP, dan laporan pimpinan (Excel & PDF).
@@ -41,7 +41,7 @@ python -m venv .venv
 ## Urutan pemakaian awal
 
 1. **Master SAP** → upload file export SAP 13 Okt 2026 (format `TEMPLATE_MASTER_SAP.xlsx`). Unrestricted menjadi stok awal.
-2. **Master SAP → Master Supplementary** → upload workbook Supplementary PM agar blok dan unit/VRA dapat dicari saat input.
+2. **Master SAP → Master Supplementary** → upload workbook Supplementary PM agar blok berhektar dan unit/VRA dapat dicari saat input. Estate pendek `3A/9A` otomatis dibaca sebagai `CM3A/CM9A`, termasuk blok plasma yang dipakai gudang CMA1.
 3. **Pengaturan → Kebun** → lengkapi daftar kebun tujuan/asal transfer. Plant dari master SAP otomatis ditambahkan.
 4. **Master SAP** → atur kategori (pakai "Atur kategori cepat per Material Group") & stok minimum.
 5. **Pengaturan → Pengguna** → buat akun petugas (bisa dikunci ke satu kebun) & pimpinan.
@@ -51,7 +51,7 @@ python -m venv .venv
 | Menu | Isi |
 |---|---|
 | Input Transaksi | Form HP: tombol **KELUAR** (default) / **TRANSFER** / **MASUK**. Satu simpan = satu **bon** (BON-yymmdd-NNN) berisi banyak barang, penerima & nomor dokumen; tiap barang tetap tercatat sendiri. Tujuan BON cukup diketik (`kantor`, kode blok, atau kode unit), lalu dikenali dan dikonfirmasi dari Master Supplementary; alias seperti `EX17` diarahkan ke `EXA17`. Tombol **Bagi ke tujuan lain** memungkinkan material yang sama dialokasikan ke beberapa blok dalam satu bon. Pilihan **GOH-STAFF** tersedia otomatis. Mendukung **Foto 1** orang/penerima (wajib untuk KELUAR & transfer kirim) dan **Foto 2** bon/dokumen (opsional); foto dari galeri dikompres dan diberi watermark waktu asli dari metadata. Material berflag/tanggal **EXPIRED** diblokir dari transaksi baru. |
-| Stok | Daftar stok berjalan + stok SAP terakhir. Admin: tombol **Ubah Qty** untuk mengisi qty fisik yang benar. |
+| Stok | Daftar stok berjalan + stok SAP terakhir. Admin dapat menetapkan **blok/rak penyimpanan** per material serta memakai tombol **Ubah Qty** untuk mengisi qty fisik yang benar. Blok dapat dicari, difilter, dan ikut dalam export Excel. |
 | Kartu stok (klik material) | Riwayat mutasi dengan saldo berjalan, foto bukti, tombol Koreksi / Batal per transaksi. |
 | Stock Opname | Isi qty fisik massal/sesi bersama, termasuk delegasi sementara pembukaan sesi kepada petugas gudang. |
 | Selisih SAP | Stok aplikasi − Stok SAP − transaksi belum posting = **selisih nyata**. Upload **MB51 + MB52** untuk mencocokkan transaksi, mengisi nomor dokumen SAP, menemukan transaksi yang terlewat, dan menjaga saldo akhir tetap sama dengan SAP. |

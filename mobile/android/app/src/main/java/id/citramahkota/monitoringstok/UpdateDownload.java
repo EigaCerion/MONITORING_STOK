@@ -18,7 +18,7 @@ import java.util.regex.Pattern;
 @CapacitorPlugin(name = "UpdateDownload")
 public class UpdateDownload extends Plugin {
     private static final Pattern SAFE_NAME = Pattern.compile(
-        "^MonitoringStok-\\d{1,6}\\.\\d{1,2}\\.\\d{1,2}\\.apk$",
+        "^(?:flowStok|MonitoringStok)-\\d{1,6}\\.\\d{1,2}\\.\\d{1,2}\\.apk$",
         Pattern.CASE_INSENSITIVE
     );
 
@@ -58,7 +58,7 @@ public class UpdateDownload extends Plugin {
         try {
             DownloadManager.Request request = new DownloadManager.Request(uri);
             request.setTitle(name);
-            request.setDescription("Pembaruan Monitoring Stok");
+            request.setDescription("Pembaruan flowStok");
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             request.setMimeType("application/vnd.android.package-archive");
             request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);

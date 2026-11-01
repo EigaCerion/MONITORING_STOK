@@ -5,7 +5,9 @@ import {
   listQueue, putQueue, setCache, setSetting,
 } from './db.js';
 import {
-  bootstrap as fetchBootstrap, health, login, normalizeServerUrl, uploadReturn, uploadTransaction,
+  bootstrap as fetchBootstrap, cancelReturn, cancelTransaction, closeOpname, correctTransaction, editTransaction, fetchTransactionPhoto,
+  health, login, mergeBons, normalizeServerUrl, splitBon,
+  setTransactionPosting, startOpname, uploadOpnameCount, uploadReturn, uploadTransaction, uploadTransactionPhoto,
 } from './api.js';
 import { compressPhoto } from './photos.js';
 import { checkUpdate, compareVersions, downloadUpdate } from './update.js';
@@ -24,11 +26,21 @@ const state = {
   bootstrap: null,
   user: null,
   queue: [],
+  transactionType: 'keluar',
   items: [],
   targets: [],
   defaultTarget: null,
   editingItemIndex: null,
   returnDraft: { transaction: null, photo: null },
+  cancelReturnDraft: null,
+  historyPhotoDraft: { transaction: null, slot: 2, photo: null },
+  cancelDraft: null,
+  editDraft: null,
+  postingDraft: null,
+  correctionDraft: null,
+  photoViewerUrl: null,
+  historySelection: new Set(),
+  opnameSessionId: null,
   photos: { photo: null, photo_2: null, return_photo: null },
   update: null,
 };
@@ -67,6 +79,9 @@ const go = (name) => {
   $$('.bottom-nav button').forEach((button) => button.classList.toggle('active', button.dataset.screen === name));
   if (name === 'queue') renderQueue();
   if (name === 'returns') renderPendingReturns();
+  if (name === 'stock') renderStock();
+  if (name === 'history') renderHistory();
+  if (name === 'opname') renderOpname();
   if (name === 'input') renderInputAvailability();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
@@ -101,6 +116,8 @@ const renderHome = async () => {
   $('#setupCard').hidden = Boolean(token);
   $('#syncCard').hidden = !token;
   $('#summaryGrid').hidden = !token;
+  $('#mainNav').hidden = !token;
+  $('#settingsShortcut').hidden = !token;
   $('#headerUser').textContent = state.user?.name || 'Aplikasi Gudang';
   $('#settingsServer').textContent = await getSetting('server_url', 'Belum diatur');
   $('#deviceIdText').textContent = await getOrCreateDeviceId();
@@ -110,6 +127,10 @@ const renderHome = async () => {
   const queuedReturns = new Set(pendingQueue().filter((entry) => entry.kind === 'return').map((entry) => entry.transaction_id));
   const pendingReturns = (state.bootstrap?.pending_returns || []).filter((row) => !queuedReturns.has(row.transaction_id));
   $('#pendingReturnCount').textContent = pendingReturns.length;
+  $('#serverTransactionCount').textContent = new Set(
+    (state.bootstrap?.recent_transactions || []).map((row) => row.bon || `#${row.id}`),
+  ).size;
+  $('#opnameSessionCount').textContent = state.bootstrap?.opname?.sessions?.length ?? 0;
   const ready = todayReady();
   $('#syncState').textContent = ready ? '✓' : '!';
   $('#syncState').classList.toggle('ok', ready);
@@ -126,8 +147,9 @@ const renderHome = async () => {
 };
 
 const targetLabel = (target) => {
-  const type = { blok: 'Blok', unit: 'Unit', workshop: 'Workshop', office: 'Kantor', staff: 'Staff', damkar: 'Damkar' }[target.type] || target.type;
-  return `${type} · ${target.code}${target.name ? ` — ${target.name}` : ''}`;
+  const type = { blok: 'Blok', unit: 'Unit', workshop: 'Workshop', office: 'Kantor', staff: 'Staff', damkar: 'Damkar' }[target?.type] || target?.type || 'Tujuan';
+  const code = target?.code || '-';
+  return `${type} · ${code}${target?.name ? ` — ${target.name}` : ''}`;
 };
 
 const buildTargets = () => {
@@ -145,12 +167,88 @@ const buildTargets = () => {
   state.targets = [...unique.values()].sort((a, b) => targetLabel(a).localeCompare(targetLabel(b), 'id'));
 };
 
+const isOutgoing = () => state.transactionType === 'keluar';
+const isTransfer = () => state.transactionType.startsWith('transfer_');
+const isStockOutflow = () => ['keluar', 'transfer_keluar'].includes(state.transactionType);
+const isStockOutflowType = (type) => ['keluar', 'transfer_keluar'].includes(type);
+const isMobileReadOnly = (row) => Boolean(
+  row?.mobile_read_only || row?.sap_posted || ['sap_mb51', 'sinkron_sap'].includes(row?.sumber),
+);
+const displayDate = (value) => {
+  if (!value) return '-';
+  const [year, month, day] = String(value).slice(0, 10).split('-');
+  return year && month && day ? `${day}/${month}/${year}` : String(value);
+};
+const transactionTypeLabel = (type) => ({
+  keluar: 'Barang keluar', masuk: 'Barang masuk',
+  transfer_keluar: 'Transfer keluar', transfer_masuk: 'Transfer masuk',
+}[type] || type);
+
+const renderTransferGardens = () => {
+  const select = $('#transferGarden');
+  const selected = select.value;
+  select.replaceChildren(new Option('— pilih kebun —', ''));
+  (state.bootstrap?.gardens || [])
+    .filter((garden) => garden.kode !== state.bootstrap?.user?.plant)
+    .forEach((garden) => select.add(new Option(`${garden.nama} (${garden.kode})`, garden.kode)));
+  if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+};
+
+const renderTransactionType = () => {
+  const outgoing = isOutgoing();
+  const stockOutflow = isStockOutflow();
+  $('#inputTitle').textContent = transactionTypeLabel(state.transactionType);
+  $$('[data-transaction-type]').forEach((button) => {
+    const value = button.dataset.transactionType;
+    button.classList.toggle('active', value === state.transactionType || (value === 'transfer' && isTransfer()));
+  });
+  $$('[data-transfer-direction]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.transferDirection === state.transactionType);
+  });
+  $('#transferFields').hidden = !isTransfer();
+  $('#transferGardenLabel').textContent = state.transactionType === 'transfer_masuk' ? 'Kebun asal' : 'Kebun tujuan';
+  renderTransferGardens();
+  $('#recipientField').hidden = !stockOutflow;
+  $('#outgoingTargetFields').hidden = !outgoing;
+  $('#incomingDocumentField').hidden = outgoing;
+  $('#documentLabel').textContent = isTransfer() ? 'Nomor dokumen transfer' : 'Nomor dokumen / surat jalan';
+  $('#documentRequiredMark').hidden = !isTransfer();
+  $('#transactionDocument').placeholder = isTransfer() ? 'wajib, mis. STO / surat jalan' : 'opsional, mis. GRN atau DO';
+  $('#photoSectionTitle').textContent = stockOutflow ? '3. Foto bukti' : '3. Foto penerimaan (opsional)';
+  $('#photo1Label').textContent = stockOutflow ? 'Foto 1 — orang / penerima' : 'Foto 1 — barang diterima';
+  $('#photoRequiredMark').hidden = !stockOutflow;
+  renderItems();
+};
+
+const setTransactionType = (transactionType) => {
+  const nextType = transactionType === 'transfer' ? 'transfer_keluar' : transactionType;
+  if (!['keluar', 'masuk', 'transfer_keluar', 'transfer_masuk'].includes(nextType)
+      || nextType === state.transactionType) return;
+  state.transactionType = nextType;
+  state.defaultTarget = null;
+  state.items.forEach((item) => {
+    item.target = null;
+    item.return_enabled = nextType === 'keluar' && Boolean(item.material.wajib_kembali);
+    item.return_qty = '';
+    item.return_qty_touched = false;
+    item.return_condition = '';
+  });
+  state.photos.return_photo = null;
+  $('#targetSearch').value = '';
+  $('#targetResults').hidden = true;
+  renderDefaultTargetConfirmation();
+  renderTransactionType();
+};
+
 const renderInputAvailability = () => {
-  const locked = !todayReady() || updateMandatory();
+  const opnameLocked = Boolean(state.bootstrap?.user?.plant
+    && state.bootstrap?.opname?.sessions?.some((session) => session.plant === state.bootstrap.user.plant));
+  const locked = !todayReady() || updateMandatory() || opnameLocked;
   $('#inputLocked').hidden = !locked;
   $('#inputLocked').textContent = updateMandatory()
     ? `Versi ${APP_VERSION} sudah di bawah versi minimum ${state.bootstrap.update.minimum_version}. Perbarui aplikasi sebelum input baru.`
-    : 'Sinkron pagi wajib dilakukan sebelum membuat transaksi hari ini.';
+    : opnameLocked ? 'Gudang sedang Stock Opname. Transaksi baru dikunci sampai sesi selesai.'
+      : 'Sinkron pagi wajib dilakukan sebelum membuat transaksi hari ini.';
   $$('#transactionForm input, #transactionForm select, #transactionForm button').forEach((element) => {
     element.disabled = locked;
   });
@@ -337,16 +435,19 @@ const handleDefaultTargetSearch = () => {
 };
 
 const addMaterial = (material) => {
-  const target = state.defaultTarget
+  const target = isOutgoing() && state.defaultTarget
     && (!state.defaultTarget.plant || state.defaultTarget.plant === material.plant)
     ? { ...state.defaultTarget } : null;
   if (state.items.some((item) => item.material.id === material.id
       && item.target?.type === target?.type && item.target?.code === target?.code)) {
-    toast('Barang dengan tujuan yang sama sudah ada; ubah tujuan dahulu untuk membaginya'); return;
+    toast(isOutgoing()
+      ? 'Barang dengan tujuan yang sama sudah ada; ubah tujuan dahulu untuk membaginya'
+      : 'Barang tersebut sudah dipilih; ubah qty pada baris yang ada');
+    return;
   }
   state.items.push({
     material, qty: '', target,
-    return_enabled: Boolean(material.wajib_kembali), return_qty: '', return_qty_touched: false,
+    return_enabled: isOutgoing() && Boolean(material.wajib_kembali), return_qty: '', return_qty_touched: false,
     return_condition: '',
   });
   $('#materialSearch').value = '';
@@ -355,6 +456,7 @@ const addMaterial = (material) => {
 };
 
 const splitItemToAnotherTarget = (itemIndex) => {
+  if (!isOutgoing()) return;
   const source = state.items[itemIndex];
   if (!source) return;
   state.items.splice(itemIndex + 1, 0, {
@@ -419,7 +521,7 @@ const renderItems = () => {
   const list = $('#selectedItems');
   list.replaceChildren();
   state.items.forEach((item, index) => {
-    const card = document.createElement('div'); card.className = 'item-card'; card.dataset.itemIndex = String(index);
+    const card = document.createElement('div'); card.className = `item-card${isOutgoing() ? '' : ' incoming'}`; card.dataset.itemIndex = String(index);
     const head = document.createElement('div'); head.className = 'item-head';
     const title = document.createElement('div');
     const name = document.createElement('b'); name.textContent = item.material.deskripsi;
@@ -435,16 +537,19 @@ const renderItems = () => {
     const qty = document.createElement('input'); qty.inputMode = 'decimal'; qty.value = item.qty; qty.placeholder = '0';
     qty.addEventListener('input', () => {
       state.items[index].qty = qty.value;
-      if (item.material.wajib_kembali && !state.items[index].return_qty_touched) {
+      if (isOutgoing() && item.material.wajib_kembali && !state.items[index].return_qty_touched) {
         state.items[index].return_qty = qty.value;
         if (returnQtyInput) returnQtyInput.value = qty.value;
       }
       updateStockHints(); renderReturnPhoto();
     });
     qtyLabel.append(qty);
-    const targetLabelNode = document.createElement('label'); targetLabelNode.textContent = 'Tujuan barang';
-    targetLabelNode.append(targetButton(item, index));
-    meta.append(qtyLabel, targetLabelNode);
+    meta.append(qtyLabel);
+    if (isOutgoing()) {
+      const targetLabelNode = document.createElement('label'); targetLabelNode.textContent = 'Tujuan barang';
+      targetLabelNode.append(targetButton(item, index));
+      meta.append(targetLabelNode);
+    }
 
     if (item.target?.type === 'damkar') {
       const activityLabel = document.createElement('label'); activityLabel.textContent = 'Aktivitas Damkar';
@@ -457,23 +562,25 @@ const renderItems = () => {
       activityLabel.append(activity); meta.append(activityLabel);
     }
 
-    const actions = document.createElement('div'); actions.className = 'item-actions';
-    const split = document.createElement('button'); split.type = 'button'; split.className = 'item-link'; split.textContent = '+ Bagi ke tujuan lain';
-    split.addEventListener('click', () => splitItemToAnotherTarget(index));
-    actions.append(split);
-    if (!item.return_enabled) {
-      const addReturn = document.createElement('button'); addReturn.type = 'button'; addReturn.className = 'item-link';
-      addReturn.textContent = '+ Ada barang lama dikembalikan';
-      addReturn.addEventListener('click', () => {
-        state.items[index].return_enabled = true;
-        state.items[index].return_qty = state.items[index].qty;
-        renderItems();
-      });
-      actions.append(addReturn);
+    if (isOutgoing()) {
+      const actions = document.createElement('div'); actions.className = 'item-actions';
+      const split = document.createElement('button'); split.type = 'button'; split.className = 'item-link'; split.textContent = '+ Bagi ke tujuan lain';
+      split.addEventListener('click', () => splitItemToAnotherTarget(index));
+      actions.append(split);
+      if (!item.return_enabled) {
+        const addReturn = document.createElement('button'); addReturn.type = 'button'; addReturn.className = 'item-link';
+        addReturn.textContent = '+ Ada barang lama dikembalikan';
+        addReturn.addEventListener('click', () => {
+          state.items[index].return_enabled = true;
+          state.items[index].return_qty = state.items[index].qty;
+          renderItems();
+        });
+        actions.append(addReturn);
+      }
+      meta.append(actions);
     }
-    meta.append(actions);
 
-    if (item.return_enabled) {
+    if (isOutgoing() && item.return_enabled) {
       const returns = document.createElement('div'); returns.className = 'return-fields';
       const returnHead = document.createElement('div'); returnHead.className = 'return-head';
       const returnTitle = document.createElement('b');
@@ -524,17 +631,25 @@ const updateStockHints = () => {
     const item = state.items[Number(card.dataset.itemIndex)];
     if (!item) return;
     const total = totals.get(item.material.id) || 0;
-    const remaining = Number(item.material.stok) - total;
+    const resulting = Number(item.material.stok) + (isStockOutflow() ? -total : total);
     const splitCount = state.items.filter((row) => row.material.id === item.material.id).length;
     const hint = card.querySelector('.item-stock-hint');
-    hint.textContent = `${splitCount > 1 ? `Total dibagi ${total} · ` : ''}Sisa ${Math.round(remaining * 1000) / 1000} ${item.material.satuan}`;
-    hint.classList.toggle('danger-text', remaining < 0);
+    if (isOutgoing()) {
+      hint.textContent = `${splitCount > 1 ? `Total dibagi ${total} · ` : ''}Sisa ${Math.round(resulting * 1000) / 1000} ${item.material.satuan}`;
+    } else if (state.transactionType === 'transfer_keluar') {
+      hint.textContent = `Sisa setelah dikirim ${Math.round(resulting * 1000) / 1000} ${item.material.satuan}`;
+    } else if (state.transactionType === 'transfer_masuk') {
+      hint.textContent = `Stok setelah transfer diterima ${Math.round(resulting * 1000) / 1000} ${item.material.satuan}`;
+    } else {
+      hint.textContent = `Stok setelah diterima ${Math.round(resulting * 1000) / 1000} ${item.material.satuan}`;
+    }
+    hint.classList.toggle('danger-text', isStockOutflow() && resulting < 0);
   });
 };
 
 const renderReturnPhoto = () => {
-  const visible = state.items.some((item) => item.return_enabled);
-  const required = physicalReturnPresent();
+  const visible = isOutgoing() && state.items.some((item) => item.return_enabled);
+  const required = isOutgoing() && physicalReturnPresent();
   $('#returnPhotoBlock').hidden = !visible;
   $('#returnPhotoRequired').hidden = !required;
   $('#returnPhotoHint').textContent = required
@@ -583,6 +698,735 @@ const renderPendingReturns = () => {
     action.addEventListener('click', () => openReturnDialog(row));
     card.append(head, action); list.append(card);
   });
+};
+
+const stockState = (material) => {
+  if (material.expired || material.input_locked) return 'locked';
+  const stock = Number(material.stok) || 0;
+  if (stock <= 0) return 'empty';
+  const minimum = Number(material.stok_minimum) || 0;
+  if (minimum > 0 && stock <= minimum) return 'low';
+  return 'available';
+};
+
+const filteredStockRows = () => {
+  const words = normalizeTargetText($('#stockSearch')?.value).split(' ').filter(Boolean);
+  const status = $('#stockStatus')?.value || '';
+  const sort = $('#stockSort')?.value || 'name';
+  const rows = (state.bootstrap?.materials || []).filter((material) => {
+    if (status && stockState(material) !== status) return false;
+    const haystack = normalizeTargetText([
+      material.material, material.deskripsi, material.kategori, material.plant, material.lokasi_blok,
+    ].join(' '));
+    return words.every((word) => haystack.includes(word));
+  });
+  rows.sort((a, b) => {
+    if (sort === 'code') return a.material.localeCompare(b.material, 'id');
+    if (sort === 'stock_desc') return Number(b.stok) - Number(a.stok) || a.deskripsi.localeCompare(b.deskripsi, 'id');
+    if (sort === 'stock_asc') return Number(a.stok) - Number(b.stok) || a.deskripsi.localeCompare(b.deskripsi, 'id');
+    return a.deskripsi.localeCompare(b.deskripsi, 'id');
+  });
+  return rows;
+};
+
+const renderStock = () => {
+  const materials = state.bootstrap?.materials || [];
+  const rows = filteredStockRows();
+  const states = materials.map(stockState);
+  $('#stockAvailableCount').textContent = states.filter((value) => value === 'available').length;
+  $('#stockLowCount').textContent = states.filter((value) => value === 'low').length;
+  $('#stockEmptyCount').textContent = states.filter((value) => value === 'empty').length;
+  $('#stockBadge').textContent = `${rows.length} material`;
+  $('#stockEmpty').hidden = rows.length > 0;
+  $('#stockSyncInfo').textContent = state.bootstrap?.synced_at
+    ? `Saldo terakhir disinkron ${new Date(state.bootstrap.synced_at).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}. Tetap dapat dilihat tanpa sinyal.`
+    : 'Lakukan Sinkron pagi untuk memperbarui saldo.';
+  const list = $('#stockList'); list.replaceChildren();
+  rows.forEach((material) => {
+    const status = stockState(material);
+    const card = document.createElement('article'); card.className = `stock-card ${status}`;
+    const info = document.createElement('div');
+    const name = document.createElement('h2'); name.textContent = material.deskripsi;
+    const code = document.createElement('small'); code.className = 'stock-code';
+    code.textContent = `${material.material} · ${material.plant}${material.kategori ? ` · ${material.kategori}` : ''}`;
+    info.append(name, code);
+    const quantity = document.createElement('div'); quantity.className = 'stock-qty';
+    const amount = document.createElement('b'); amount.textContent = `${material.stok} ${material.satuan}`;
+    const label = document.createElement('small');
+    label.textContent = status === 'locked' ? 'Tidak dapat diinput' : status === 'empty' ? 'Stok habis' : status === 'low' ? 'Stok menipis' : 'Stok tersedia';
+    quantity.append(amount, label);
+    const flags = document.createElement('div'); flags.className = 'stock-flags';
+    const addFlag = (text, className = '') => {
+      if (!text) return;
+      const flag = document.createElement('span'); flag.textContent = text; flag.className = className; flags.append(flag);
+    };
+    addFlag(material.lokasi_blok ? `Lokasi ${material.lokasi_blok}` : 'Lokasi belum diisi');
+    if (Number(material.stok_minimum) > 0) addFlag(`Minimum ${material.stok_minimum} ${material.satuan}`, status === 'low' ? 'warn' : '');
+    if (material.expired) addFlag('EXPIRED', 'danger');
+    if (material.input_locked) addFlag(material.input_lock_reason || 'DIKUNCI ADMIN', 'danger');
+    card.append(info, quantity, flags); list.append(card);
+  });
+};
+
+const opnameSessions = () => state.bootstrap?.opname?.sessions || [];
+
+const activeOpnameSession = () => {
+  const sessions = opnameSessions();
+  let session = sessions.find((row) => row.id === state.opnameSessionId);
+  if (!session && sessions.length) {
+    [session] = sessions;
+    state.opnameSessionId = session.id;
+  }
+  return session || null;
+};
+
+const pendingOpnameMaterials = (sessionId) => {
+  const result = new Map();
+  pendingQueue().filter((entry) => entry.kind === 'opname_count' && entry.session_id === sessionId)
+    .forEach((entry) => entry.payload.items.forEach((item) => result.set(Number(item.material_id), entry)));
+  return result;
+};
+
+const fillOpnameStartGardens = () => {
+  const select = $('#opnamePlant');
+  const selected = select.value;
+  select.replaceChildren(new Option('— pilih gudang —', ''));
+  (state.bootstrap?.gardens || []).forEach((garden) => select.add(new Option(`${garden.nama} (${garden.kode})`, garden.kode)));
+  const delegated = state.bootstrap?.opname?.delegated_plant || state.bootstrap?.user?.plant || '';
+  if ([...select.options].some((option) => option.value === (selected || delegated))) select.value = selected || delegated;
+};
+
+const renderOpnameMaterials = (session) => {
+  const query = normalizeTargetText($('#opnameSearch').value);
+  const words = query.split(' ').filter(Boolean);
+  const existing = new Map((session.items || []).map((item) => [Number(item.material_id), item]));
+  const queued = pendingOpnameMaterials(session.id);
+  const onlyUncounted = $('#opnameUncountedOnly').checked;
+  const materials = (state.bootstrap?.materials || [])
+    .filter((material) => material.plant === session.plant)
+    .filter((material) => {
+      if (onlyUncounted && (existing.has(Number(material.id)) || queued.has(Number(material.id)))) return false;
+      const haystack = normalizeTargetText(`${material.material} ${material.deskripsi} ${material.kategori || ''}`);
+      return words.every((word) => haystack.includes(word));
+    })
+    .sort((a, b) => {
+      const aExact = compactTargetCode(a.material) === compactTargetCode(query) ? 1 : 0;
+      const bExact = compactTargetCode(b.material) === compactTargetCode(query) ? 1 : 0;
+      return bExact - aExact || a.deskripsi.localeCompare(b.deskripsi, 'id');
+    })
+    .slice(0, query ? 60 : 30);
+  const list = $('#opnameMaterialList'); list.replaceChildren();
+  $('#opnameMaterialEmpty').hidden = materials.length > 0;
+  materials.forEach((material) => {
+    const counted = existing.get(Number(material.id));
+    const queuedEntry = queued.get(Number(material.id));
+    const countedByOther = counted && Number(counted.counted_by) !== Number(state.bootstrap.user.id);
+    const card = document.createElement('article');
+    card.className = `stock-card opname-card${countedByOther ? ' locked' : ''}`;
+    const info = document.createElement('div');
+    const name = document.createElement('h2'); name.textContent = material.deskripsi;
+    const code = document.createElement('small'); code.className = 'stock-code';
+    code.textContent = `${material.material} · stok buku ${material.stok} ${material.satuan}`;
+    info.append(name, code);
+    const status = document.createElement('div'); status.className = 'stock-qty';
+    const statusText = document.createElement('b');
+    statusText.textContent = queuedEntry ? 'Antrean' : counted ? `${counted.fisik} ${material.satuan}` : 'Belum';
+    const statusSub = document.createElement('small');
+    statusSub.textContent = queuedEntry ? 'Menunggu upload' : counted ? `oleh ${counted.counted_by_name}` : 'Belum dihitung';
+    status.append(statusText, statusSub);
+    const fields = document.createElement('div'); fields.className = 'opname-fields';
+    const qtyLabel = document.createElement('label'); qtyLabel.textContent = `Qty fisik (${material.satuan})`;
+    const qty = document.createElement('input'); qty.inputMode = 'decimal'; qty.placeholder = '0';
+    qty.value = counted && !countedByOther ? counted.fisik : '';
+    qty.disabled = Boolean(countedByOther || queuedEntry);
+    qtyLabel.append(qty);
+    const noteLabel = document.createElement('label'); noteLabel.textContent = 'Keterangan';
+    const note = document.createElement('input'); note.placeholder = 'opsional, mis. rak A';
+    note.value = counted && !countedByOther ? (counted.keterangan || '') : '';
+    note.disabled = Boolean(countedByOther || queuedEntry); noteLabel.append(note);
+    const save = document.createElement('button'); save.type = 'button'; save.className = 'btn primary';
+    save.textContent = counted ? 'Perbarui hitungan' : 'Simpan hitungan';
+    save.disabled = Boolean(countedByOther || queuedEntry);
+    save.addEventListener('click', async () => {
+      try { await saveOpnameDraft(session, material, qty.value, note.value); }
+      catch (error) { showDialog('Hitungan belum disimpan', error.message); }
+    });
+    fields.append(qtyLabel, noteLabel, save);
+    card.append(info, status, fields); list.append(card);
+  });
+};
+
+const renderOpname = () => {
+  const sessions = opnameSessions();
+  const session = activeOpnameSession();
+  $('#opnameNoSession').hidden = Boolean(session);
+  $('#opnameActive').hidden = !session;
+  $('#opnameBadge').textContent = session ? `Sesi #${session.id}` : 'Belum ada sesi';
+  const canStart = Boolean(state.bootstrap?.opname?.can_start);
+  $('#opnameStartForm').hidden = !canStart || Boolean(session);
+  $('#opnameDate').value ||= localDate();
+  fillOpnameStartGardens();
+  const fixedPlant = state.bootstrap?.user?.role === 'petugas';
+  $('#opnamePlantField').hidden = fixedPlant;
+  if (!session) return;
+  const picker = $('#opnameSessionPicker'); picker.replaceChildren();
+  sessions.forEach((row) => picker.add(new Option(`#${row.id} · ${row.garden_name} · ${row.jenis_barang}`, row.id)));
+  picker.value = String(session.id); $('#opnameSessionPickerField').hidden = sessions.length < 2;
+  $('#opnameSessionMeta').textContent = `SESI #${session.id} · ${session.tanggal}`;
+  $('#opnameSessionName').textContent = `${session.jenis_barang} · ${session.garden_name}`;
+  $('#opnameSessionNote').textContent = [session.lokasi, session.keterangan].filter(Boolean).join(' · ') || session.plant;
+  $('#opnameProgress').textContent = session.counted;
+  const members = $('#opnameMembers'); members.replaceChildren();
+  (session.members || []).forEach((member) => {
+    const badge = document.createElement('span'); badge.textContent = `${member.name}: ${member.count} barang`; members.append(badge);
+  });
+  if (!session.members?.length) {
+    const badge = document.createElement('span'); badge.textContent = 'Belum ada anggota yang posting'; members.append(badge);
+  }
+  $('#opnameCloseCard').hidden = !session.can_close;
+  renderOpnameMaterials(session);
+};
+
+const saveOpnameDraft = async (session, material, rawQuantity, note) => {
+  const quantity = numberValue(rawQuantity);
+  if (!Number.isFinite(quantity) || quantity < 0) throw new Error('Isi qty fisik 0 atau lebih');
+  const clientUuid = crypto.randomUUID();
+  await putQueue({
+    kind: 'opname_count', client_uuid: clientUuid, session_id: session.id,
+    owner_user_id: state.bootstrap.user.id, status: 'pending', created_at: new Date().toISOString(),
+    payload: { client_uuid: clientUuid, items: [{ material_id: material.id, quantity, note: note.trim() }] },
+    summary: [{ material: material.material, description: `Opname · ${material.deskripsi}`, qty: quantity, unit: material.satuan }],
+    error: '', matches: [], server_result: null,
+  });
+  state.queue = await listQueue();
+  renderOpname(); await renderHome();
+  toast('Hitungan tersimpan di antrean HP');
+};
+
+const submitOpnameStart = async () => {
+  if (!navigator.onLine) throw new Error('Membuka sesi membutuhkan koneksi server');
+  const plant = state.bootstrap.user.role === 'petugas'
+    ? (state.bootstrap.opname.delegated_plant || state.bootstrap.user.plant) : $('#opnamePlant').value;
+  if (!plant) throw new Error('Pilih gudang yang akan diopname');
+  const result = await startOpname({
+    plant, date: $('#opnameDate').value || localDate(), item_type: $('#opnameItemType').value.trim() || 'UMUM',
+    location: $('#opnameLocation').value.trim(), note: $('#opnameNote').value.trim(),
+  });
+  state.bootstrap.opname.sessions = [
+    ...state.bootstrap.opname.sessions.filter((row) => row.id !== result.session.id), result.session,
+  ];
+  state.opnameSessionId = result.session.id;
+  await setCache('bootstrap', state.bootstrap); renderOpname(); await renderHome();
+  toast(result.created ? 'Sesi opname berhasil dibuka' : 'Sesi opname aktif dibuka');
+};
+
+const openOpnameCloseDialog = () => {
+  const session = activeOpnameSession();
+  if (!session) return;
+  const pending = pendingQueue().filter((entry) => entry.kind === 'opname_count' && entry.session_id === session.id);
+  if (pending.length) {
+    showDialog('Masih ada hitungan belum di-upload', `Upload ${pending.length} antrean opname terlebih dahulu sebelum menutup sesi.`); return;
+  }
+  $('#opnameConfirmAll').checked = false; $('#opnameCloseConfirm').disabled = true;
+  const members = $('#opnameCloseMembers'); members.replaceChildren();
+  (session.members || []).forEach((member) => {
+    const badge = document.createElement('span'); badge.textContent = `${member.name}: ${member.count} barang`; members.append(badge);
+  });
+  $('#opnameCloseDialog').showModal();
+};
+
+const submitOpnameClose = async () => {
+  const session = activeOpnameSession();
+  if (!session || !$('#opnameConfirmAll').checked) throw new Error('Konfirmasi semua anggota wajib dicentang');
+  const result = await closeOpname(session.id);
+  Object.entries(result.stocks || {}).forEach(([materialId, stock]) => {
+    const material = state.bootstrap.materials.find((row) => Number(row.id) === Number(materialId));
+    if (material) material.stok = Number(stock);
+  });
+  state.bootstrap.opname.sessions = state.bootstrap.opname.sessions.filter((row) => row.id !== session.id);
+  state.opnameSessionId = null; await setCache('bootstrap', state.bootstrap);
+  $('#opnameCloseDialog').close(); renderOpname(); renderStock(); await renderHome();
+  showDialog('Sesi opname selesai', `${result.counted} material dihitung dan ${result.adjusted} stok disesuaikan.`);
+};
+
+const filteredHistoryRows = () => {
+  const words = normalizeTargetText($('#historySearch')?.value).split(' ').filter(Boolean);
+  const status = $('#historyStatus')?.value || '';
+  const transactionType = $('#historyType')?.value || '';
+  return (state.bootstrap?.recent_transactions || []).filter((row) => {
+    if (transactionType && row.jenis !== transactionType) return false;
+    if (status === 'pending' && (row.batal || row.sap_posted)) return false;
+    if (status === 'posted' && (row.batal || !row.sap_posted)) return false;
+    if (status === 'cancelled' && !row.batal) return false;
+    const haystack = normalizeTargetText([
+      row.bon, row.jenis, row.material, row.deskripsi, row.penerima, row.keterangan,
+      row.tujuan_tipe, row.tujuan_kode, row.kebun_asal, row.kebun_tujuan,
+      row.nomor_dokumen, row.sap_doc,
+    ].join(' '));
+    return words.every((word) => haystack.includes(word));
+  });
+};
+
+const renderHistory = () => {
+  const rows = filteredHistoryRows();
+  const groups = new Map();
+  rows.forEach((row) => {
+    const key = row.bon || `#${row.id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  });
+  const list = $('#historyList'); list.replaceChildren();
+  $('#historyBadge').textContent = `${groups.size} BON`;
+  $('#historyEmpty').hidden = groups.size > 0;
+  groups.forEach((items, bon) => {
+    const first = items[0];
+    const card = document.createElement('div'); card.className = 'queue-card history-card';
+    const head = document.createElement('div'); head.className = 'queue-head';
+    const title = document.createElement('div');
+    const bonNode = document.createElement('b'); bonNode.textContent = first.bon || `Transaksi #${first.id}`;
+    const detail = document.createElement('small');
+    const party = first.jenis === 'transfer_masuk' ? ` · dari ${first.kebun_asal || '-'}`
+      : first.jenis === 'transfer_keluar' ? ` · ke ${first.kebun_tujuan || '-'}`
+        : isStockOutflowType(first.jenis) ? ` · ${first.penerima || '-'}` : '';
+    detail.textContent = `${displayDate(first.tanggal)} · ${transactionTypeLabel(first.jenis)}${party}`;
+    title.append(bonNode, detail);
+    const allCancelled = items.every((row) => row.batal);
+    const activeItems = items.filter((row) => !row.batal);
+    const allPosted = activeItems.length > 0 && activeItems.every((row) => row.sap_posted);
+    const groupReadOnly = activeItems.some(isMobileReadOnly);
+    const status = document.createElement('span');
+    status.className = `status-pill ${allCancelled ? 'danger' : allPosted ? 'ok' : 'warn'}`;
+    status.textContent = allCancelled ? 'BATAL' : allPosted ? 'Sudah SAP' : 'Belum SAP';
+    head.append(title, status); card.append(head);
+
+    const itemList = document.createElement('div'); itemList.className = 'history-items';
+    items.forEach((row) => {
+      const item = document.createElement('div'); item.className = `history-item${row.batal ? ' cancelled' : ''}`;
+      const name = document.createElement('b'); name.textContent = row.deskripsi;
+      const code = document.createElement('small');
+      if (row.jenis === 'masuk') {
+        code.textContent = `${row.material} · +${row.qty} ${row.satuan}${row.nomor_dokumen ? ` · Dok ${row.nomor_dokumen}` : ''}`;
+      } else if (row.jenis === 'transfer_masuk') {
+        code.textContent = `${row.material} · +${row.qty} ${row.satuan} · ← ${row.kebun_asal || '-'} · Dok ${row.nomor_dokumen || '-'}`;
+      } else if (row.jenis === 'transfer_keluar') {
+        code.textContent = `${row.material} · −${row.qty} ${row.satuan} · → ${row.kebun_tujuan || '-'} · Dok ${row.nomor_dokumen || '-'}`;
+      } else {
+        const destination = row.tujuan_tipe || row.tujuan_kode
+          ? targetLabel({ type: row.tujuan_tipe, code: row.tujuan_kode, name: '' })
+          : row.keterangan || row.penerima || 'Tujuan tidak tersedia';
+        code.textContent = `${row.material} · −${row.qty} ${row.satuan} · ${destination}`;
+      }
+      const flags = document.createElement('small'); flags.className = 'history-flags';
+      const returnFlag = row.jenis === 'keluar'
+        ? (row.has_return ? '↩ kembali tercatat' : row.wajib_kembali ? '⚠ belum kembali' : '') : '';
+      const photoFlag = `📷 ${Number(row.has_photo) + Number(row.has_photo_2)}/2`;
+      const sapDate = row.sap_posting_date ? `posting ${displayDate(row.sap_posting_date)}` : '';
+      const source = row.sumber === 'sap_mb51' ? 'Impor MB51'
+        : row.sumber === 'sinkron_sap' ? 'Penyesuaian SAP' : row.created_by_name ? `dicatat ${row.created_by_name}` : '';
+      flags.textContent = [photoFlag, returnFlag, row.sap_doc ? `SAP ${row.sap_doc}` : '', sapDate, source, row.batal_alasan || '']
+        .filter(Boolean).join(' · ');
+      const content = document.createElement('div'); content.append(name, code, flags);
+      if (state.bootstrap?.user?.role === 'admin' && !row.batal && !isMobileReadOnly(row)) {
+        const correct = document.createElement('button'); correct.type = 'button'; correct.className = 'item-link';
+        correct.textContent = 'Koreksi qty';
+        correct.addEventListener('click', () => openCorrectionDialog(row));
+        const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'item-link danger-link';
+        cancel.textContent = 'Batalkan transaksi ini';
+        cancel.addEventListener('click', () => openCancelDialog(row));
+        content.append(correct);
+        if (row.return_id) {
+          const cancelReturnButton = document.createElement('button');
+          cancelReturnButton.type = 'button'; cancelReturnButton.className = 'item-link danger-link';
+          cancelReturnButton.textContent = 'Batalkan catatan kembali';
+          cancelReturnButton.addEventListener('click', () => openCancelReturnDialog(row));
+          content.append(cancelReturnButton);
+        }
+        content.append(cancel);
+        if (row.jenis === 'keluar') {
+          const selection = document.createElement('div'); selection.className = 'history-select';
+          const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = state.historySelection.has(row.id);
+          checkbox.setAttribute('aria-label', `Pilih transaksi ${row.id}`);
+          checkbox.addEventListener('change', () => {
+            if (checkbox.checked) state.historySelection.add(row.id); else state.historySelection.delete(row.id);
+            renderHistorySelectionBar();
+          });
+          selection.append(checkbox, content); item.append(selection);
+        } else item.append(content);
+      } else item.append(content);
+      itemList.append(item);
+    });
+    card.append(itemList);
+    const actions = document.createElement('div'); actions.className = 'queue-actions';
+    [1, 2].forEach((slot) => {
+      const field = slot === 1 ? 'has_photo' : 'has_photo_2';
+      const target = items.find((row) => row[field]);
+      if (!target) return;
+      const view = document.createElement('button'); view.type = 'button'; view.className = 'btn';
+      view.textContent = `Lihat Foto ${slot}`;
+      view.addEventListener('click', () => openPhotoViewer(target, slot));
+      actions.append(view);
+    });
+    if (['admin', 'petugas'].includes(state.bootstrap?.user?.role) && !allCancelled && !groupReadOnly) {
+      const queuedPhotos = new Set(pendingQueue().filter((entry) => entry.kind === 'transaction_photo')
+        .map((entry) => `${entry.bon || `#${entry.transaction_id}`}|${entry.payload.slot}`));
+      [1, 2].forEach((slot) => {
+        if (queuedPhotos.has(`${bon}|${slot}`)) return;
+        const field = slot === 1 ? 'has_photo' : 'has_photo_2';
+        const target = items.find((row) => !row.batal && !isMobileReadOnly(row) && !row[field]);
+        if (!target) return;
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'btn';
+        button.textContent = `+ Foto ${slot}`;
+        button.addEventListener('click', () => openHistoryPhotoDialog(target, slot));
+        actions.append(button);
+      });
+      const active = items.find((row) => !row.batal);
+      if (state.bootstrap.user.role === 'admin' && active) {
+        const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'btn'; edit.textContent = 'Edit detail BON';
+        edit.addEventListener('click', () => openEditTransactionDialog(active));
+        actions.append(edit);
+      }
+      if (active && !allPosted) {
+        const posting = document.createElement('button'); posting.type = 'button'; posting.className = 'btn';
+        posting.textContent = 'Tandai sudah SAP';
+        posting.addEventListener('click', () => openPostingDialog(active, false));
+        actions.append(posting);
+      }
+    }
+    if (groupReadOnly && !allCancelled) {
+      const locked = document.createElement('div'); locked.className = 'history-readonly';
+      locked.textContent = first.sumber === 'sap_mb51'
+        ? 'Impor SAP · hanya baca. Transaksi ini tidak berasal dari input aplikasi.'
+        : 'Sudah direalisasikan SAP · foto dan detail dikunci. Koreksi dilakukan melalui Admin web.';
+      card.append(locked);
+    }
+    if (actions.childElementCount) card.append(actions);
+    list.append(card);
+  });
+  renderHistorySelectionBar();
+};
+
+const renderHistorySelectionBar = () => {
+  const knownIds = new Set((state.bootstrap?.recent_transactions || [])
+    .filter((row) => !row.batal && !isMobileReadOnly(row) && row.jenis === 'keluar').map((row) => row.id));
+  [...state.historySelection].forEach((id) => { if (!knownIds.has(id)) state.historySelection.delete(id); });
+  const count = state.historySelection.size;
+  $('#historySelectionBar').hidden = count === 0;
+  $('#historySelectionCount').textContent = count;
+  $('#mergeBonButton').disabled = count < 2;
+};
+
+const changeSelectedBon = async (action, confirmPosted = false) => {
+  const ids = [...state.historySelection];
+  if (!ids.length) throw new Error('Pilih transaksi terlebih dahulu');
+  if (action === 'merge' && ids.length < 2) throw new Error('Pilih minimal dua transaksi untuk disatukan');
+  try {
+    const result = action === 'merge'
+      ? await mergeBons(ids, confirmPosted) : await splitBon(ids, confirmPosted);
+    const changed = new Set(result.transaction_ids);
+    state.bootstrap.recent_transactions.forEach((row) => {
+      if (!changed.has(row.id)) return;
+      row.bon = result.bon;
+      if (action === 'merge') {
+        if (result.has_photo) row.has_photo = 1;
+        if (result.has_photo_2) row.has_photo_2 = 1;
+      }
+    });
+    state.historySelection.clear();
+    await setCache('bootstrap', state.bootstrap);
+    renderHistory();
+    toast(action === 'merge' ? `Transaksi disatukan ke ${result.bon}` : `Transaksi dipisahkan ke ${result.bon}`);
+  } catch (error) {
+    if (error.body?.needs_posted_confirmation && !confirmPosted) {
+      const approved = confirm('Ada transaksi yang sudah posting SAP. Nomor BON pada SAP mungkin perlu disesuaikan. Tetap lanjutkan?');
+      if (approved) return changeSelectedBon(action, true);
+      return;
+    }
+    throw error;
+  }
+};
+
+const closePhotoViewer = () => {
+  if (state.photoViewerUrl) URL.revokeObjectURL(state.photoViewerUrl);
+  state.photoViewerUrl = null;
+  $('#photoViewerImage').hidden = true;
+  $('#photoViewerImage').removeAttribute('src');
+  $('#photoViewerDialog').close();
+};
+
+const openPhotoViewer = async (transaction, slot) => {
+  if (state.photoViewerUrl) URL.revokeObjectURL(state.photoViewerUrl);
+  state.photoViewerUrl = null;
+  $('#photoViewerTitle').textContent = `Foto ${slot} · ${transaction.bon || `#${transaction.id}`}`;
+  $('#photoViewerLoading').hidden = false;
+  $('#photoViewerImage').hidden = true;
+  $('#photoViewerDialog').showModal();
+  try {
+    const blob = await fetchTransactionPhoto(transaction.id, slot);
+    state.photoViewerUrl = URL.createObjectURL(blob);
+    $('#photoViewerImage').src = state.photoViewerUrl;
+    $('#photoViewerImage').hidden = false;
+    $('#photoViewerLoading').hidden = true;
+  } catch (error) {
+    closePhotoViewer(); showDialog('Foto tidak dapat dibuka', error.message);
+  }
+};
+
+const openHistoryPhotoDialog = (transaction, slot) => {
+  if (isMobileReadOnly(transaction)) {
+    showDialog('Transaksi dikunci', 'Transaksi sudah direalisasikan SAP. Foto hanya dapat dilihat dan tidak dapat ditambahkan dari HP.');
+    return;
+  }
+  state.historyPhotoDraft = { transaction, slot, photo: null };
+  $('#historyPhotoTitle').textContent = `Tambahkan Foto ${slot}`;
+  $('#historyPhotoInfo').textContent = `${transaction.bon || `Transaksi #${transaction.id}`} · ${transaction.deskripsi}`;
+  $('#historyPhotoPreview').hidden = true;
+  $('#historyPhotoPreview').removeAttribute('src');
+  $('#historyPhotoSave').disabled = true;
+  $('#historyPhotoDialog').showModal();
+};
+
+const closeHistoryPhotoDialog = () => {
+  state.historyPhotoDraft = { transaction: null, slot: 2, photo: null };
+  $('#historyPhotoDialog').close();
+};
+
+const bindHistoryPhoto = () => {
+  const handler = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const photo = await compressPhoto(file);
+      state.historyPhotoDraft.photo = photo;
+      $('#historyPhotoPreview').src = photo.preview;
+      $('#historyPhotoPreview').hidden = false;
+      $('#historyPhotoSave').disabled = false;
+    } catch (error) { showDialog('Foto gagal dibaca', error.message); }
+    event.target.value = '';
+  };
+  $('#historyPhotoCamera').addEventListener('change', handler);
+  $('#historyPhotoGallery').addEventListener('change', handler);
+};
+
+const saveHistoryPhotoDraft = async () => {
+  const { transaction, slot, photo } = state.historyPhotoDraft;
+  if (!transaction || !photo) throw new Error('Ambil atau pilih foto terlebih dahulu');
+  if (isMobileReadOnly(transaction)) throw new Error('Transaksi sudah SAP dan tidak dapat diberi foto tambahan');
+  const clientUuid = crypto.randomUUID();
+  await putQueue({
+    kind: 'transaction_photo', client_uuid: clientUuid, transaction_id: transaction.id,
+    bon: transaction.bon || `#${transaction.id}`,
+    owner_user_id: state.bootstrap.user.id, status: 'pending', created_at: new Date().toISOString(),
+    payload: { client_uuid: clientUuid, slot, photo_time: photo.captured_at },
+    summary: [{
+      material: transaction.material, description: `Foto ${slot} · ${transaction.deskripsi}`,
+      qty: transaction.qty, unit: transaction.satuan,
+    }],
+    photo: photo.blob, error: '', server_result: null,
+  });
+  state.queue = await listQueue();
+  closeHistoryPhotoDialog();
+  await renderHome(); renderHistory(); renderQueue();
+  toast(`Foto ${slot} tersimpan di antrean HP`);
+  go('queue');
+};
+
+const openCancelDialog = (transaction) => {
+  state.cancelDraft = transaction;
+  $('#cancelDialogTitle').textContent = transaction.deskripsi;
+  const stockAddition = ['masuk', 'transfer_masuk'].includes(transaction.jenis);
+  $('#cancelDialogInfo').textContent = `${transaction.bon || `Transaksi #${transaction.id}`} · ${transactionTypeLabel(transaction.jenis)} ${transaction.qty} ${transaction.satuan} · ${transaction.penerima || transaction.nomor_dokumen || '-'}`;
+  $('#cancelStockNotice').innerHTML = stockAddition
+    ? '<b>Stok penerimaan akan dikurangi kembali.</b><br>Jika sudah direalisasikan di SAP, dokumen SAP juga harus dibatalkan atau di-reverse.'
+    : '<b>Stok barang keluar akan dikembalikan.</b><br>Jika sudah direalisasikan di SAP, dokumen SAP juga harus dibatalkan atau di-reverse.';
+  $('#cancelReason').value = '';
+  $('#cancelDialog').showModal();
+  setTimeout(() => $('#cancelReason').focus(), 50);
+};
+
+const closeCancelDialog = () => {
+  state.cancelDraft = null;
+  $('#cancelDialog').close();
+};
+
+const submitCancellation = async () => {
+  const transaction = state.cancelDraft;
+  const reason = $('#cancelReason').value.trim();
+  if (!transaction) throw new Error('Transaksi tidak ditemukan');
+  if (!reason) throw new Error('Alasan pembatalan wajib diisi');
+  const button = $('#cancelConfirm'); button.disabled = true; button.textContent = 'Membatalkan…';
+  try {
+    const result = await cancelTransaction(transaction.id, reason);
+    const cached = state.bootstrap?.recent_transactions?.find((row) => row.id === transaction.id);
+    if (cached) { cached.batal = 1; cached.batal_alasan = reason; }
+    const material = state.bootstrap?.materials?.find((row) => row.id === result.material_id);
+    if (material && Number.isFinite(Number(result.stock))) material.stok = Number(result.stock);
+    await setCache('bootstrap', state.bootstrap);
+    closeCancelDialog(); renderHistory(); await renderHome();
+    showDialog('Transaksi dibatalkan', result.sap_warning
+      ? 'Stok server sudah disesuaikan. Transaksi ini sudah masuk SAP, jadi dokumen SAP juga wajib dibatalkan atau di-reverse.'
+      : 'Stok server sudah disesuaikan dan riwayat ditandai BATAL.');
+  } finally {
+    button.disabled = false; button.textContent = 'Ya, batalkan transaksi';
+  }
+};
+
+const openCancelReturnDialog = (transaction) => {
+  state.cancelReturnDraft = transaction;
+  $('#cancelReturnTitle').textContent = transaction.deskripsi;
+  $('#cancelReturnInfo').textContent = `${transaction.bon || `Transaksi #${transaction.id}`} · ${transaction.return_qty} ${transaction.satuan} · ${transaction.return_condition || '-'}`;
+  $('#cancelReturnReason').value = '';
+  $('#cancelReturnDialog').showModal();
+  setTimeout(() => $('#cancelReturnReason').focus(), 50);
+};
+
+const closeCancelReturnDialog = () => {
+  state.cancelReturnDraft = null;
+  $('#cancelReturnDialog').close();
+};
+
+const submitReturnCancellation = async () => {
+  const transaction = state.cancelReturnDraft;
+  const reason = $('#cancelReturnReason').value.trim();
+  if (!transaction?.return_id) throw new Error('Catatan pengembalian tidak ditemukan');
+  if (!reason) throw new Error('Alasan pembatalan wajib diisi');
+  const button = $('#cancelReturnConfirm'); button.disabled = true; button.textContent = 'Membatalkan…';
+  try {
+    const result = await cancelReturn(transaction.return_id, reason);
+    const cached = state.bootstrap?.recent_transactions?.find((row) => row.id === transaction.id);
+    if (cached) {
+      cached.has_return = 0; cached.return_id = null; cached.return_qty = null;
+      cached.return_condition = null; cached.return_date = null; cached.return_by = null;
+    }
+    if (result.pending_again && !state.bootstrap.pending_returns.some((row) => row.transaction_id === transaction.id)) {
+      state.bootstrap.pending_returns.push({
+        transaction_id: transaction.id, bon: transaction.bon, tanggal: transaction.tanggal,
+        qty_out: transaction.qty, penerima: transaction.penerima, material_id: transaction.material_id,
+        material: transaction.material, deskripsi: transaction.deskripsi, satuan: transaction.satuan,
+        plant: transaction.plant,
+      });
+    }
+    await setCache('bootstrap', state.bootstrap);
+    closeCancelReturnDialog(); renderHistory(); renderPendingReturns(); await renderHome();
+    showDialog('Catatan pengembalian dibatalkan', 'Barang kembali masuk ke daftar “belum kembali”. Saldo stok gudang tidak berubah.');
+  } finally {
+    button.disabled = false; button.textContent = 'Ya, batalkan catatan pengembalian';
+  }
+};
+
+const openEditTransactionDialog = (transaction) => {
+  state.editDraft = transaction;
+  $('#editTransactionTitle').textContent = transaction.bon || `Transaksi #${transaction.id}`;
+  $('#editRecipientLabel').textContent = ['masuk', 'transfer_masuk'].includes(transaction.jenis)
+    ? 'Pengirim / pemasok (opsional)' : 'Nama penerima';
+  $('#editRecipient').value = transaction.penerima || '';
+  $('#editNote').value = transaction.keterangan || '';
+  $('#editDocument').value = transaction.nomor_dokumen || '';
+  $('#editWholeBon').checked = Boolean(transaction.bon);
+  $('#editWholeBon').disabled = !transaction.bon;
+  $('#editTransactionDialog').showModal();
+};
+
+const closeEditTransactionDialog = () => {
+  state.editDraft = null;
+  $('#editTransactionDialog').close();
+};
+
+const submitTransactionEdit = async () => {
+  const transaction = state.editDraft;
+  const recipient = $('#editRecipient').value.trim();
+  if (!transaction) throw new Error('Transaksi tidak ditemukan');
+  if (isStockOutflowType(transaction.jenis) && !recipient) throw new Error('Nama penerima wajib diisi');
+  const button = $('#editTransactionSave'); button.disabled = true; button.textContent = 'Menyimpan…';
+  try {
+    const result = await editTransaction(transaction.id, {
+      recipient, note: $('#editNote').value.trim(), document: $('#editDocument').value.trim(),
+      all_bon: $('#editWholeBon').checked,
+    });
+    const ids = new Set(result.transaction_ids);
+    state.bootstrap.recent_transactions.forEach((row) => {
+      if (!ids.has(row.id)) return;
+      row.penerima = result.recipient; row.keterangan = result.note; row.nomor_dokumen = result.document;
+    });
+    await setCache('bootstrap', state.bootstrap);
+    closeEditTransactionDialog(); renderHistory();
+    toast('Detail transaksi diperbarui');
+  } finally {
+    button.disabled = false; button.textContent = 'Simpan perubahan';
+  }
+};
+
+const openPostingDialog = (transaction, currentlyPosted) => {
+  state.postingDraft = { transaction, currentlyPosted };
+  $('#postingDialogTitle').textContent = currentlyPosted ? 'Batalkan status posting SAP' : 'Tandai sudah posting SAP';
+  $('#postingDialogInfo').textContent = `${transaction.bon || `Transaksi #${transaction.id}`} · seluruh item aktif dalam BON`;
+  $('#postingDocument').value = transaction.sap_doc || '';
+  $('#postingDocument').disabled = currentlyPosted;
+  const button = $('#postingConfirm');
+  button.textContent = currentlyPosted ? 'Ya, tandai belum posting SAP' : 'Tandai sudah posting SAP';
+  button.className = `btn ${currentlyPosted ? 'danger' : 'primary'} block`;
+  $('#postingDialog').showModal();
+};
+
+const closePostingDialog = () => {
+  state.postingDraft = null;
+  $('#postingDialog').close();
+};
+
+const submitPostingStatus = async () => {
+  const draft = state.postingDraft;
+  if (!draft) throw new Error('Transaksi tidak ditemukan');
+  const posted = !draft.currentlyPosted;
+  const button = $('#postingConfirm'); button.disabled = true;
+  try {
+    const result = await setTransactionPosting(draft.transaction.id, posted, $('#postingDocument').value.trim());
+    const ids = new Set(result.transaction_ids);
+    state.bootstrap.recent_transactions.forEach((row) => {
+      if (!ids.has(row.id)) return;
+      row.sap_posted = result.posted ? 1 : 0;
+      if (result.posted && result.document) row.sap_doc = result.document;
+    });
+    await setCache('bootstrap', state.bootstrap);
+    closePostingDialog(); renderHistory();
+    toast(result.posted ? 'Seluruh BON ditandai sudah posting SAP' : 'Seluruh BON ditandai belum posting SAP');
+  } finally { button.disabled = false; }
+};
+
+const openCorrectionDialog = (transaction) => {
+  state.correctionDraft = transaction;
+  $('#correctionTitle').textContent = transaction.deskripsi;
+  $('#correctionInfo').textContent = `${transaction.bon || `Transaksi #${transaction.id}`} · qty saat ini ${transaction.qty} ${transaction.satuan}`;
+  $('#correctionQty').value = transaction.qty;
+  $('#correctionReason').value = '';
+  $('#correctionDialog').showModal();
+};
+
+const closeCorrectionDialog = () => {
+  state.correctionDraft = null;
+  $('#correctionDialog').close();
+};
+
+const submitCorrection = async () => {
+  const transaction = state.correctionDraft;
+  const quantity = numberValue($('#correctionQty').value);
+  const reason = $('#correctionReason').value.trim();
+  if (!transaction) throw new Error('Transaksi tidak ditemukan');
+  if (!(quantity > 0)) throw new Error('Qty koreksi harus lebih dari 0');
+  if (!reason) throw new Error('Alasan koreksi wajib diisi');
+  const button = $('#correctionSave'); button.disabled = true; button.textContent = 'Mengoreksi…';
+  try {
+    const result = await correctTransaction(transaction.id, quantity, reason);
+    const cached = state.bootstrap.recent_transactions.find((row) => row.id === transaction.id);
+    if (cached) cached.qty = result.quantity;
+    const material = state.bootstrap.materials.find((row) => row.id === result.material_id);
+    if (material) material.stok = result.stock;
+    await setCache('bootstrap', state.bootstrap);
+    closeCorrectionDialog(); renderHistory(); await renderHome();
+    showDialog('Qty berhasil dikoreksi', result.sap_warning
+      ? 'Saldo server sudah diperbarui. Transaksi ini sudah posting SAP, sehingga qty pada SAP juga wajib dikoreksi.'
+      : 'Qty transaksi dan saldo stok server sudah diperbarui.');
+  } finally {
+    button.disabled = false; button.textContent = 'Simpan koreksi qty';
+  }
 };
 
 const renderLaterReturnPhotoRule = () => {
@@ -676,36 +1520,42 @@ const validateDraft = () => {
   for (const item of state.items) {
     const qty = numberValue(item.qty);
     if (!(qty > 0)) throw new Error(`${item.material.deskripsi}: isi qty yang benar`);
-    if (qty > Number(item.material.stok)) throw new Error(`${item.material.deskripsi}: qty melebihi stok hasil sinkron`);
-    if (!item.target) throw new Error(`${item.material.deskripsi}: pilih tujuan barang`);
-    const targetKey = `${item.material.id}|${item.target.type}|${item.target.code}|${item.target.activity || ''}`;
+    if (isStockOutflow() && qty > Number(item.material.stok)) throw new Error(`${item.material.deskripsi}: qty melebihi stok hasil sinkron`);
+    if (isOutgoing() && !item.target) throw new Error(`${item.material.deskripsi}: pilih tujuan barang`);
+    const targetKey = `${item.material.id}|${item.target?.type || ''}|${item.target?.code || ''}|${item.target?.activity || ''}`;
     if (targetKeys.has(targetKey)) throw new Error(`${item.material.deskripsi}: tujuan yang sama tercantum dua kali`);
     targetKeys.add(targetKey);
-    if (requiresUnitOrWorkshop(item.material) && !['unit', 'workshop'].includes(item.target.type)) {
+    if (isOutgoing() && requiresUnitOrWorkshop(item.material) && !['unit', 'workshop'].includes(item.target.type)) {
       throw new Error(`${item.material.deskripsi}: FAME, BBM, dan sparepart wajib ke Unit atau Workshop`);
     }
-    if (item.target.type === 'damkar' && !['330', '331'].includes(item.target.activity)) {
+    if (isOutgoing() && item.target.type === 'damkar' && !['330', '331'].includes(item.target.activity)) {
       throw new Error(`${item.material.deskripsi}: pilih aktivitas Damkar 330 atau 331`);
     }
-    if (item.material.wajib_kembali && !item.return_condition) {
+    if (isOutgoing() && item.material.wajib_kembali && !item.return_condition) {
       throw new Error(`${item.material.deskripsi}: wajib tukar — isi kondisi barang lama`);
     }
-    if (item.return_enabled && item.return_condition && !NO_PHYSICAL_RETURN.has(item.return_condition)) {
+    if (isOutgoing() && item.return_enabled && item.return_condition && !NO_PHYSICAL_RETURN.has(item.return_condition)) {
       const returnQty = numberValue(item.return_qty);
       if (!(returnQty > 0)) throw new Error(`${item.material.deskripsi}: isi qty barang lama`);
       if (returnQty > qty) throw new Error(`${item.material.deskripsi}: qty barang lama melebihi qty keluar`);
     }
     totalByMaterial.set(item.material.id, (totalByMaterial.get(item.material.id) || 0) + qty);
   }
-  for (const [materialId, total] of totalByMaterial) {
-    const material = state.items.find((item) => item.material.id === materialId).material;
-    if (total > Number(material.stok)) throw new Error(`${material.deskripsi}: total pembagian melebihi stok hasil sinkron`);
+  if (isStockOutflow()) {
+    for (const [materialId, total] of totalByMaterial) {
+      const material = state.items.find((item) => item.material.id === materialId).material;
+      if (total > Number(material.stok)) throw new Error(`${material.deskripsi}: total pembagian melebihi stok hasil sinkron`);
+    }
   }
-  if (!$('#recipient').value.trim()) throw new Error('Nama penerima wajib diisi');
-  if (!state.photos.photo) throw new Error('Foto orang/penerima wajib diambil');
+  if (isStockOutflow() && !$('#recipient').value.trim()) throw new Error('Nama penerima wajib diisi');
+  if (isStockOutflow() && !state.photos.photo) throw new Error('Foto orang/penerima wajib diambil');
+  if (isTransfer() && !$('#transferGarden').value) {
+    throw new Error(`Pilih kebun ${state.transactionType === 'transfer_masuk' ? 'asal' : 'tujuan'} transfer`);
+  }
+  if (isTransfer() && !$('#transactionDocument').value.trim()) throw new Error('Nomor dokumen transfer wajib diisi');
   if (!$('#transactionDate').value) throw new Error('Tanggal transaksi wajib diisi');
   if ($('#transactionDate').value > localDate()) throw new Error('Tanggal transaksi tidak boleh di masa depan');
-  if (physicalReturnPresent() && !state.photos.return_photo) throw new Error('Foto barang lama wajib diambil');
+  if (isOutgoing() && physicalReturnPresent() && !state.photos.return_photo) throw new Error('Foto barang lama wajib diambil');
 };
 
 const resetDraft = () => {
@@ -719,26 +1569,30 @@ const resetDraft = () => {
   $('#targetResults').hidden = true;
   renderDefaultTargetConfirmation();
   ['#photoPreview', '#photo2Preview', '#returnPhotoPreview'].forEach((selector) => { $(selector).hidden = true; $(selector).removeAttribute('src'); });
-  buildTargets(); renderItems();
+  buildTargets(); renderTransferGardens(); renderItems();
 };
 
 const saveDraft = async () => {
   validateDraft();
   const clientUuid = crypto.randomUUID();
+  const outgoing = isOutgoing();
+  const stockOutflow = isStockOutflow();
   const payload = {
     client_uuid: clientUuid,
-    type: 'keluar',
+    type: state.transactionType,
     date: $('#transactionDate').value,
-    recipient: $('#recipient').value.trim(),
+    recipient: stockOutflow ? $('#recipient').value.trim() : '',
+    document: outgoing ? '' : $('#transactionDocument').value.trim(),
+    counterparty_plant: isTransfer() ? $('#transferGarden').value : '',
     note: $('#note').value.trim(),
     items: state.items.map((item) => ({
       material_id: item.material.id,
       qty: numberValue(item.qty),
-      target: { type: item.target.type, code: item.target.code, activity: item.target.activity || '' },
-      return_qty: item.return_enabled ? (item.return_qty || '') : '',
-      return_condition: item.return_enabled ? (item.return_condition || '') : '',
+      target: outgoing ? { type: item.target.type, code: item.target.code, activity: item.target.activity || '' } : null,
+      return_qty: outgoing && item.return_enabled ? (item.return_qty || '') : '',
+      return_condition: outgoing && item.return_enabled ? (item.return_condition || '') : '',
     })),
-    photo_time: state.photos.photo.captured_at,
+    photo_time: state.photos.photo?.captured_at || '',
     photo_2_time: state.photos.photo_2?.captured_at || '',
     return_photo_time: state.photos.return_photo?.captured_at || '',
   };
@@ -754,7 +1608,7 @@ const saveDraft = async () => {
       return_qty: payload.items[index].return_qty,
       return_condition: payload.items[index].return_condition,
     })),
-    photo: state.photos.photo.blob,
+    photo: state.photos.photo?.blob || null,
     photo_2: state.photos.photo_2?.blob || null,
     return_photo: state.photos.return_photo?.blob || null,
     error: '', matches: [], server_result: null,
@@ -770,7 +1624,10 @@ const saveDraft = async () => {
 const statusLabel = (entry) => ({
   pending: 'Menunggu upload', uploading: 'Mengunggah…', error: 'Gagal — coba lagi',
   duplicate: 'Perlu konfirmasi',
-  sent: entry.kind === 'return' ? 'Pengembalian terkirim' : `Terkirim · ${entry.server_result?.bon || ''}`,
+  sent: entry.kind === 'return' ? 'Pengembalian terkirim'
+    : entry.kind === 'transaction_photo' ? 'Foto terkirim'
+      : entry.kind === 'opname_count' ? 'Hitungan terkirim'
+      : `Terkirim · ${entry.server_result?.bon || ''}`,
 }[entry.status] || entry.status);
 
 const renderQueue = async () => {
@@ -786,7 +1643,16 @@ const renderQueue = async () => {
     const head = document.createElement('div'); head.className = 'queue-head';
     const title = document.createElement('div');
     const recipient = document.createElement('b');
-    recipient.textContent = entry.kind === 'return' ? '↩ Pengembalian barang lama' : entry.payload.recipient;
+    recipient.textContent = entry.kind === 'return' ? '↩ Pengembalian barang lama'
+      : entry.kind === 'transaction_photo' ? `📷 Foto ${entry.payload.slot} transaksi`
+        : entry.kind === 'opname_count' ? `▤ Stock Opname · sesi #${entry.session_id}`
+        : entry.payload.type === 'masuk'
+          ? `↓ Barang masuk${entry.payload.document ? ` · ${entry.payload.document}` : ''}`
+          : entry.payload.type === 'transfer_masuk'
+            ? `⇠ Transfer masuk · ${entry.payload.counterparty_plant} · ${entry.payload.document}`
+            : entry.payload.type === 'transfer_keluar'
+              ? `⇢ Transfer keluar · ${entry.payload.counterparty_plant} · ${entry.payload.recipient}`
+              : `↑ Barang keluar · ${entry.payload.recipient}`;
     const date = document.createElement('small'); date.textContent = `${entry.payload.date} · ${new Date(entry.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`;
     title.append(recipient, date);
     const badge = document.createElement('span'); badge.className = `status-pill ${entry.status === 'sent' ? 'ok' : entry.status === 'duplicate' || entry.status === 'error' ? 'warn' : 'neutral'}`; badge.textContent = statusLabel(entry);
@@ -828,7 +1694,10 @@ const uploadEntry = async (clientUuid, confirmDuplicate = false) => {
   entry.status = 'uploading'; entry.error = ''; await putQueue(entry); await renderQueue();
   try {
     if (confirmDuplicate) entry.payload.confirm_duplicate = true;
-    const result = entry.kind === 'return' ? await uploadReturn(entry) : await uploadTransaction(entry);
+    const result = entry.kind === 'return' ? await uploadReturn(entry)
+      : entry.kind === 'transaction_photo' ? await uploadTransactionPhoto(entry)
+        : entry.kind === 'opname_count' ? await uploadOpnameCount(entry)
+        : await uploadTransaction(entry);
     entry.status = 'sent'; entry.server_result = result; entry.error = '';
     entry.photo = null; entry.photo_2 = null; entry.return_photo = null;
     if (entry.kind === 'return' && state.bootstrap?.pending_returns) {
@@ -837,15 +1706,39 @@ const uploadEntry = async (clientUuid, confirmDuplicate = false) => {
       );
       await setCache('bootstrap', state.bootstrap);
     }
+    if (entry.kind === 'transaction_photo' && state.bootstrap?.recent_transactions) {
+      const field = Number(entry.payload.slot) === 2 ? 'has_photo_2' : 'has_photo';
+      state.bootstrap.recent_transactions.forEach((row) => {
+        if ((row.bon || `#${row.id}`) === entry.bon) row[field] = 1;
+      });
+      await setCache('bootstrap', state.bootstrap);
+    }
+    if (entry.kind === 'opname_count' && result.session && state.bootstrap?.opname) {
+      state.bootstrap.opname.sessions = [
+        ...state.bootstrap.opname.sessions.filter((session) => session.id !== result.session.id),
+        result.session,
+      ];
+      await setCache('bootstrap', state.bootstrap);
+    }
+    if (!entry.kind && result.stocks && state.bootstrap?.materials) {
+      Object.entries(result.stocks).forEach(([materialId, stock]) => {
+        const material = state.bootstrap.materials.find((row) => Number(row.id) === Number(materialId));
+        if (material) material.stok = Number(stock);
+      });
+      await setCache('bootstrap', state.bootstrap);
+    }
     await putQueue(entry);
-    toast(entry.kind === 'return' ? 'Pengembalian diterima server' : `${result.bon} diterima server`);
+    toast(entry.kind === 'return' ? 'Pengembalian diterima server'
+      : entry.kind === 'transaction_photo' ? `Foto ${entry.payload.slot} diterima server`
+        : entry.kind === 'opname_count' ? 'Hitungan opname diterima server'
+        : `${result.bon} diterima server`);
   } catch (error) {
     entry.status = error.body?.duplicate ? 'duplicate' : 'error';
     entry.error = error.message; entry.matches = error.body?.matches || [];
     if (error.status === 401) await clearAuth();
     await putQueue(entry);
   }
-  state.queue = await listQueue(); await renderQueue(); await renderHome(); await renderConnection(true);
+  state.queue = await listQueue(); await renderQueue(); renderOpname(); await renderHome(); await renderConnection(true);
 };
 
 const uploadAll = async () => {
@@ -861,7 +1754,7 @@ const syncMorning = async () => {
     await setCache('bootstrap', data);
     await setSetting('user', data.user);
     state.user = data.user;
-    buildTargets(); await renderHome();
+    buildTargets(); renderTransactionType(); renderStock(); renderOpname(); await renderHome();
     toast('Sinkron pagi berhasil. Aplikasi siap dipakai offline.');
     checkForUpdates(false);
   } catch (error) {
@@ -917,9 +1810,55 @@ const startUpdate = async () => {
 const bindEvents = () => {
   $$('.bottom-nav button').forEach((button) => button.addEventListener('click', () => go(button.dataset.screen)));
   $$('[data-go]').forEach((button) => button.addEventListener('click', () => go(button.dataset.go)));
+  $('#settingsShortcut').addEventListener('click', () => go('settings'));
+  $$('[data-transaction-type]').forEach((button) => {
+    button.addEventListener('click', () => setTransactionType(button.dataset.transactionType));
+  });
+  $$('[data-transfer-direction]').forEach((button) => {
+    button.addEventListener('click', () => setTransactionType(button.dataset.transferDirection));
+  });
   $('#loginForm').addEventListener('submit', doLogin);
   $('#syncButton').addEventListener('click', syncMorning);
   $('#materialSearch').addEventListener('input', renderMaterialResults);
+  $('#historySearch').addEventListener('input', renderHistory);
+  $('#historyType').addEventListener('change', renderHistory);
+  $('#historyStatus').addEventListener('change', renderHistory);
+  $('#stockSearch').addEventListener('input', renderStock);
+  $('#stockStatus').addEventListener('change', renderStock);
+  $('#stockSort').addEventListener('change', renderStock);
+  $('#opnameSearch').addEventListener('input', () => {
+    const session = activeOpnameSession(); if (session) renderOpnameMaterials(session);
+  });
+  $('#opnameUncountedOnly').addEventListener('change', () => {
+    const session = activeOpnameSession(); if (session) renderOpnameMaterials(session);
+  });
+  $('#opnameSessionPicker').addEventListener('change', () => {
+    state.opnameSessionId = Number($('#opnameSessionPicker').value); renderOpname();
+  });
+  $('#opnameStartForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try { await submitOpnameStart(); } catch (error) { showDialog('Sesi belum dapat dibuka', error.message); }
+  });
+  $('#openOpnameClose').addEventListener('click', openOpnameCloseDialog);
+  $('#opnameCloseDialogButton').addEventListener('click', () => $('#opnameCloseDialog').close());
+  $('#opnameCloseDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); $('#opnameCloseDialog').close();
+  });
+  $('#opnameConfirmAll').addEventListener('change', () => {
+    $('#opnameCloseConfirm').disabled = !$('#opnameConfirmAll').checked;
+  });
+  $('#opnameCloseConfirm').addEventListener('click', async () => {
+    const button = $('#opnameCloseConfirm'); button.disabled = true;
+    try { await submitOpnameClose(); } catch (error) { showDialog('Sesi belum dapat ditutup', error.message); }
+    finally { button.disabled = !$('#opnameConfirmAll').checked; }
+  });
+  $('#clearBonSelection').addEventListener('click', () => { state.historySelection.clear(); renderHistory(); });
+  $('#mergeBonButton').addEventListener('click', async () => {
+    try { await changeSelectedBon('merge'); } catch (error) { showDialog('BON tidak dapat disatukan', error.message); }
+  });
+  $('#splitBonButton').addEventListener('click', async () => {
+    try { await changeSelectedBon('split'); } catch (error) { showDialog('BON tidak dapat dipisahkan', error.message); }
+  });
   $('#targetSearch').addEventListener('input', handleDefaultTargetSearch);
   $('#targetDialogSearch').addEventListener('input', renderItemTargetSearch);
   $('#targetDialogClose').addEventListener('click', closeTargetDialog);
@@ -936,6 +1875,52 @@ const bindEvents = () => {
     event.preventDefault();
     try { await saveLaterReturnDraft(); } catch (error) { showDialog('Periksa pengembalian', error.message); }
   });
+  $('#historyPhotoClose').addEventListener('click', closeHistoryPhotoDialog);
+  $('#historyPhotoDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); closeHistoryPhotoDialog();
+  });
+  $('#historyPhotoSave').addEventListener('click', async () => {
+    try { await saveHistoryPhotoDraft(); } catch (error) { showDialog('Foto belum dapat disimpan', error.message); }
+  });
+  $('#cancelDialogClose').addEventListener('click', closeCancelDialog);
+  $('#cancelDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); closeCancelDialog();
+  });
+  $('#cancelConfirm').addEventListener('click', async () => {
+    try { await submitCancellation(); } catch (error) { showDialog('Pembatalan gagal', error.message); }
+  });
+  $('#cancelReturnClose').addEventListener('click', closeCancelReturnDialog);
+  $('#cancelReturnDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); closeCancelReturnDialog();
+  });
+  $('#cancelReturnConfirm').addEventListener('click', async () => {
+    try { await submitReturnCancellation(); } catch (error) { showDialog('Pembatalan pengembalian gagal', error.message); }
+  });
+  $('#editTransactionClose').addEventListener('click', closeEditTransactionDialog);
+  $('#editTransactionDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); closeEditTransactionDialog();
+  });
+  $('#editTransactionSave').addEventListener('click', async () => {
+    try { await submitTransactionEdit(); } catch (error) { showDialog('Perubahan gagal', error.message); }
+  });
+  $('#postingDialogClose').addEventListener('click', closePostingDialog);
+  $('#postingDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); closePostingDialog();
+  });
+  $('#postingConfirm').addEventListener('click', async () => {
+    try { await submitPostingStatus(); } catch (error) { showDialog('Status SAP gagal diperbarui', error.message); }
+  });
+  $('#correctionClose').addEventListener('click', closeCorrectionDialog);
+  $('#correctionDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); closeCorrectionDialog();
+  });
+  $('#correctionSave').addEventListener('click', async () => {
+    try { await submitCorrection(); } catch (error) { showDialog('Koreksi gagal', error.message); }
+  });
+  $('#photoViewerClose').addEventListener('click', closePhotoViewer);
+  $('#photoViewerDialog').addEventListener('cancel', (event) => {
+    event.preventDefault(); closePhotoViewer();
+  });
   $('#transactionForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     try { await saveDraft(); } catch (error) { showDialog('Periksa transaksi', error.message); }
@@ -944,7 +1929,7 @@ const bindEvents = () => {
   $('#testConnection').addEventListener('click', async () => {
     const connected = await renderConnection(true);
     showDialog(connected ? 'Server terhubung' : 'Server belum terhubung', connected
-      ? 'Jalur Tailscale menuju laptop dapat dipakai.' : 'Pastikan Tailscale aktif, laptop menyala, dan server Monitoring Stok berjalan.');
+      ? 'Jalur Tailscale menuju laptop dapat dipakai.' : 'Pastikan Tailscale aktif, laptop menyala, dan server flowStok berjalan.');
   });
   $('#logoutButton').addEventListener('click', async () => {
     if (pendingQueue().length && !confirm('Masih ada transaksi belum terunggah. Keluar tidak menghapus antrean, tetapi hanya akun pembuat yang dapat mengunggahnya. Lanjutkan?')) return;
@@ -959,6 +1944,7 @@ const bindEvents = () => {
   bindPhoto('#photo2Camera', '#photo2Gallery', '#photo2Preview', 'photo_2');
   bindPhoto('#returnPhotoCamera', '#returnPhotoGallery', '#returnPhotoPreview', 'return_photo');
   bindLaterReturnPhoto();
+  bindHistoryPhoto();
   App.addListener('backButton', () => {
     const active = $('.screen.active')?.id;
     if (active && active !== 'screenHome') go('home'); else App.exitApp();
@@ -980,7 +1966,7 @@ const init = async () => {
     await putQueue(entry);
   }
   state.queue = await listQueue();
-  buildTargets(); renderItems(); await renderHome(); await renderQueue();
+  buildTargets(); renderTransactionType(); renderStock(); renderOpname(); await renderHome(); await renderQueue();
   renderConnection(Boolean(await getSetting('server_url')));
   if (state.bootstrap?.update?.github_repo) checkForUpdates(false);
 };

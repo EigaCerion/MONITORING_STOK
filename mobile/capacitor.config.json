@@ -1,8 +1,8 @@
 {
   "appId": "id.citramahkota.monitoringstok",
-  "appName": "Monitoring Stok",
+  "appName": "flowStok",
   "webDir": "dist",
-  "backgroundColor": "#11161b",
+  "backgroundColor": "#07111f",
   "server": {
     "androidScheme": "http",
     "cleartext": true

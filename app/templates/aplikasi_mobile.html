@@ -18,7 +18,7 @@
       <label for="github_repo">Link repositori GitHub</label>
       <input id="github_repo" name="github_repo" value="{{ settings.mobile_github_repo }}"
              placeholder="https://github.com/pemilik/monitoring-stok" autocomplete="off">
-      <div class="hint">Boleh dikosongkan dahulu. APK mencari aset bernama <b>MonitoringStok-x.y.z.apk</b> pada GitHub Releases terbaru.</div>
+      <div class="hint">Boleh dikosongkan dahulu. flowStok mencari aset bernama <b>flowStok-x.y.z.apk</b>. Saat migrasi dari versi lama, unggah juga nama kompatibilitas <b>MonitoringStok-x.y.z.apk</b>.</div>
     </div>
     <div class="field">
       <label for="minimum_version">Versi minimum yang diizinkan</label>
@@ -31,6 +31,10 @@
 
   <div class="card">
     <h2>{{ ikon('ponsel', 20) }} Cara distribusi</h2>
+    {% if apk_stable %}
+    <div class="flash ok"><b>APK stabil tersedia:</b> {{ apk_stable.name }} ({{ apk_stable.size_mb }} MB).</div>
+    <a class="btn primary block" href="{{ url_for('main.unduh_aplikasi') }}">{{ ikon('unduh', 18) }} Buka halaman unduh petugas</a>
+    {% endif %}
     {% if apk_debug %}
     <div class="flash warn"><b>APK uji tersedia:</b> {{ apk_debug.name }} ({{ apk_debug.size_mb }} MB). Gunakan hanya untuk uji terbatas; versi produksi harus memakai tanda tangan rilis permanen.</div>
     <a class="btn block" href="{{ url_for('admin.unduh_apk_uji') }}">{{ ikon('unduh', 18) }} Unduh APK uji</a>

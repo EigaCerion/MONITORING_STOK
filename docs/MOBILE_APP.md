@@ -1,16 +1,35 @@
-# Aplikasi Android Monitoring Stok
+# Aplikasi Android flowStok
 
-Versi aktif: **0.1.2 (uji lapangan)**.
+Versi aktif: **1.0.2 (stabil)**.
 
 ## Cakupan versi awal
 
 - Login memakai akun Admin/Petugas Gudang yang sudah ada.
-- Server tetap laptop Monitoring Stok melalui alamat Tailscale.
+- Server tetap laptop flowStok melalui alamat Tailscale.
 - Sinkron pagi mengunduh master material, saldo, material terkunci/expired, dan
   Supplementary blok/unit.
 - Transaksi keluar dapat disimpan tanpa jaringan, termasuk banyak barang, satu
   material yang dibagi ke beberapa tujuan, pengembalian barang lama, dan dua
   foto transaksi.
+- Transaksi masuk dapat disimpan tanpa jaringan dengan banyak barang, tanggal,
+  nomor dokumen/GRN, keterangan, dan dua foto opsional. Upload tetap idempoten,
+  memiliki penjaga transaksi identik pada hari yang sama, dan langsung
+  memperbarui saldo server.
+- Transfer antar-kebun dapat dicatat offline untuk dua arah. **Kirim** wajib
+  memilih kebun tujuan, nomor dokumen, penerima, Foto 1, dan stok yang cukup.
+  **Terima** wajib memilih kebun asal dan nomor dokumen; dua foto bersifat
+  opsional. Daftar kebun aktif ikut disimpan saat Sinkron pagi.
+- Layar **Stok** menampilkan saldo hasil Sinkron pagi tanpa jaringan, dengan
+  pencarian kode/nama, filter tersedia/menipis/habis/dikunci, urutan saldo,
+  lokasi penyimpanan, batas minimum, serta penanda expired dan kunci Admin.
+- Layar **Stock Opname** membuka sesi untuk Admin atau petugas yang menerima
+  delegasi, menampilkan sesi aktif dari Sinkron pagi, dan menyimpan hitungan ke
+  antrean HP. Pencarian memprioritaskan kode material yang sama persis sehingga
+  barang yang dicari muncul paling atas tanpa menggulir daftar panjang.
+- Hitungan material tidak boleh ditimpa petugas lain. Penutupan sesi menampilkan
+  anggota yang sudah memposting, menolak bila antrean opname di HP belum habis,
+  dan meminta konfirmasi bahwa seluruh anggota sudah selesai sebelum stok
+  disesuaikan oleh server.
 - Upload akhir hari mengirim antrean satu per satu. `client_uuid` memastikan
   retry tidak membuat BON kedua walaupun jawaban server terputus.
 - Transaksi identik pada tanggal yang sama ditahan untuk konfirmasi operator.
@@ -20,6 +39,29 @@ Versi aktif: **0.1.2 (uji lapangan)**.
 - Sinkron pagi mengunduh daftar barang wajib tukar yang belum kembali.
   Pengembalian yang menyusul dapat dicatat offline dari APK dan diunggah
   idempoten melalui antrean yang sama.
+- Sinkron pagi juga menyimpan 300 baris transaksi keluar, masuk, dan transfer
+  terbaru. Riwayat dapat dicari offline berdasarkan BON, material, penerima,
+  kebun lawan, tujuan, atau dokumen SAP, serta difilter menurut jenis transaksi,
+  status posting SAP, dan pembatalan.
+- Foto pertama/kedua yang masih kosong dapat ditambahkan dari Riwayat. Foto
+  disimpan di antrean offline, lalu saat upload diterapkan ke seluruh item dalam
+  BON yang sama dengan pengaman retry idempoten. Foto yang sudah tersimpan dapat
+  dibuka dari Riwayat ketika perangkat terhubung ke server.
+- Admin dapat membatalkan satu transaksi dari Riwayat ketika server terhubung.
+  Stok cache APK langsung mengikuti stok server dan peringatan reverse SAP
+  ditampilkan bila transaksi sudah berstatus posting SAP.
+- Admin dapat memperbaiki penerima, keterangan, dan nomor dokumen untuk satu
+  transaksi atau seluruh item BON. Admin/Petugas juga dapat menandai seluruh
+  BON sudah atau belum posting SAP beserta nomor dokumennya.
+- Admin dapat mengoreksi qty satu transaksi ketika server terhubung. Saldo cache
+  APK mengikuti hasil server dan warning koreksi SAP muncul untuk transaksi yang
+  sudah berstatus posting.
+- Admin dapat memilih beberapa item riwayat untuk disatukan menjadi satu BON
+  atau dipindahkan ke BON baru. Qty dan stok tidak berubah; transaksi yang sudah
+  posting SAP memerlukan konfirmasi tambahan.
+- Admin dapat membatalkan catatan pengembalian barang lama dari Riwayat dengan
+  alasan wajib. Transaksi kembali muncul sebagai “belum kembali”, jejak audit
+  tetap tersimpan, dan saldo stok tidak berubah.
 - Satu material dapat dibagi ke beberapa tujuan dengan tombol **Bagi ke tujuan
   lain**, dan aplikasi menampilkan total pembagian serta sisa stok.
 - Tujuan BON dicari seperti versi web: kode blok/unit, alias EX ke EXA,
@@ -27,12 +69,14 @@ Versi aktif: **0.1.2 (uji lapangan)**.
   dapat dikonfirmasi; AFD tetap meminta operator memilih blok yang benar.
 - Panel **Kelola → Aplikasi Mobile** mengatur GitHub Releases dan dapat
   menonaktifkan perangkat.
-- Pemeriksa pembaruan membaca link GitHub dari panel Admin. APK yang dikenali
-  harus bernama `MonitoringStok-x.y.z.apk`.
+- Pemeriksa pembaruan membaca link GitHub dari panel Admin. APK utama bernama
+  `flowStok-x.y.z.apk`; nama lama `MonitoringStok-x.y.z.apk` tetap dikenali
+  selama masa migrasi.
 
-Transaksi masuk, transfer, PR/GRN, dan Stock Opname offline belum ada pada versi
-seri 0.1. Fitur tersebut tetap dapat digunakan melalui aplikasi web dan akan masuk
-setelah transaksi keluar lolos uji lapangan.
+Cakupan APK ditetapkan pada barang keluar, barang masuk, transfer antar-kebun,
+riwayat hasil sinkron, daftar stok, dan Stock Opname. PR/GRN lengkap serta
+rekonsiliasi SAP tetap ditangani melalui aplikasi web agar APK gudang tetap
+sederhana dan cepat dipakai.
 
 ## Alur operator
 
@@ -59,17 +103,17 @@ Admin harus mengaktifkannya kembali dari panel.
 
 ## Build APK
 
-APK uji:
+APK stabil:
 
 ```powershell
 cd D:\CODE\monitoring_stok\mobile
-powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1 -ModeDebug
+powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1
 ```
 
-Hasil uji langsung: `mobile/dist-apk/MonitoringStok-0.1.2-debug.apk`. Untuk
-perangkat uji yang sudah memakai tanda tangan debug yang sama, aset GitHub
-Releases disalin dengan nama `MonitoringStok-0.1.2.apk` agar dikenali pemeriksa
-pembaruan aplikasi.
+Hasil rilis utama: `mobile/dist-apk/flowStok-1.0.2.apk`. Build juga menghasilkan
+`MonitoringStok-1.0.2.apk` sebagai aset kompatibilitas bagi APK lama. Unggah
+keduanya pada GitHub Release 1.0.2. Halaman **Unduh App** pada web selalu memilih
+nama flowStok untuk Admin dan Petugas Gudang.
 
 APK produksi membutuhkan keystore khusus dan permanen di luar repositori:
 

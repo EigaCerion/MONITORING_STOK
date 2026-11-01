@@ -7,7 +7,7 @@
   <div>
     <small><a href="{{ url_for('main.stok') }}">← Stok</a></small>
     <h1>{{ m.deskripsi }}</h1>
-    <p class="muted">{{ m.material }} {{ ui.sp_badge(m) }} · {{ m.kebun_nama }} · {{ m.kategori or 'Belum dikategorikan' }} · Group {{ m.material_group }}</p>
+    <p class="muted">{{ m.material }} {{ ui.sp_badge(m) }} · {{ m.kebun_nama }} · {{ m.kategori or 'Belum dikategorikan' }} · Blok {{ m.lokasi_blok or 'belum diatur' }} · Group {{ m.material_group }}</p>
   </div>
   {% if user.role == 'admin' %}<div class="actions">{{ ui.tombol_ubah(m) }}</div>{% endif %}
 </div>

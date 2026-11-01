@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#1f6e43">
+  <meta name="theme-color" content="#1E3A8A">
   <meta name="csrf" content="{{ csrf }}">
-  <title>{% block title %}Monitoring Stok{% endblock %} · Monitoring Stok</title>
+  <link rel="icon" href="{{ url_for('static', filename='monitoring-stok-logo.svg') }}" type="image/svg+xml">
+  <title>{% block title %}flowStok{% endblock %} · flowStok</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 {% from "_ikon.html" import ikon %}
@@ -15,10 +16,27 @@
 {% if user %}
 {% set ep = request.endpoint or '' %}
 <header class="topbar" id="topbar">
-  <a class="brand" href="{{ url_for('main.dashboard') }}">{{ ikon('stok', 20) }} Monitoring Stok</a>
-  <span class="user-chip" title="{{ user.nama }} · {{ ROLE_LABEL[user.role] }}">{{ user.nama }}</span>
-  <button class="menu-toggle" type="button" aria-label="Menu" data-menu>{{ ikon('menu', 24) }}</button>
-  <nav class="nav">
+  <div class="topbar-main">
+    <a class="brand" href="{{ url_for('main.dashboard') }}">
+      <img class="brand-logo" src="{{ url_for('static', filename='monitoring-stok-logo.svg') }}" alt="">
+      <span class="brand-copy"><b>flowStok</b><small>Inventory Control</small></span>
+    </a>
+    <div class="topbar-actions">
+      <span class="user-chip" title="{{ user.nama }} · {{ ROLE_LABEL[user.role] }}">{{ user.nama }}</span>
+      <div class="userbox">
+        <a class="account-link" href="{{ url_for('admin.akun') }}" title="Kelola akun">
+          <span class="account-icon">{{ ikon('akun', 17) }}</span>
+          <span class="account-copy"><b>{{ user.nama }}</b><small>{{ ROLE_LABEL[user.role] }}</small></span>
+        </a>
+        <form method="post" action="{{ url_for('auth.logout') }}" class="form-inline">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <button class="logout-button" type="submit" aria-label="Keluar" title="Keluar">{{ ikon('logout', 17) }}<span>Keluar</span></button>
+        </form>
+      </div>
+      <button class="menu-toggle" type="button" aria-label="Buka menu" aria-expanded="false" data-menu>{{ ikon('menu', 24) }}</button>
+    </div>
+  </div>
+  <nav class="nav" aria-label="Navigasi utama">
     {% if user.role != 'petugas' %}<a href="{{ url_for('main.dashboard') }}" class="{{ 'on' if ep == 'main.dashboard' }}">{{ ikon('beranda', 18) }}<span>Dashboard</span></a>{% endif %}
     {% if user.role in ('admin','petugas') %}<a href="{{ url_for('main.input_transaksi') }}" class="{{ 'on' if ep == 'main.input_transaksi' }}">{{ ikon('tambah', 18) }}<span>Input Transaksi</span></a>{% endif %}
     <a href="{{ url_for('main.stok') }}" class="{{ 'on' if ep in ('main.stok','main.kartu_stok') }}">{{ ikon('stok', 18) }}<span>Stok</span></a>
@@ -26,6 +44,7 @@
     <a href="{{ url_for('main.daftar_kembali') }}" class="{{ 'on' if ep == 'main.daftar_kembali' }}">{{ ikon('pengembalian', 18) }}<span>Pengembalian</span></a>
     {% if user.role in ('admin','petugas') %}
       <a href="{{ url_for('main.opname') }}" class="{{ 'on' if ep == 'main.opname' or (ep.startswith('opname.') and ep != 'opname.pengaturan') }}">{{ ikon('opname', 18) }}<span>Stock Opname</span></a>
+      <a href="{{ url_for('main.unduh_aplikasi') }}" class="{{ 'on' if ep in ('main.unduh_aplikasi','main.unduh_aplikasi_apk') }}">{{ ikon('unduh', 18) }}<span>Unduh App</span></a>
     {% endif %}
     {% if user.role in ('admin','pimpinan') %}
       <a href="{{ url_for('main.selisih') }}" class="{{ 'on' if ep in ('main.selisih','admin.rekonsiliasi_sap') }}">{{ ikon('selisih', 18) }}<span>Selisih SAP</span></a>
@@ -50,13 +69,6 @@
       </details>
     {% endif %}
   </nav>
-  <div class="userbox">
-    <a href="{{ url_for('admin.akun') }}" title="Ganti password">{{ ikon('akun', 17) }}<span>{{ user.nama }} · {{ ROLE_LABEL[user.role] }}</span></a>
-    <form method="post" action="{{ url_for('auth.logout') }}" class="form-inline">
-      <input type="hidden" name="_csrf" value="{{ csrf }}">
-      <button class="linkbtn" type="submit" aria-label="Keluar" title="Keluar">{{ ikon('logout', 17) }}<span>Keluar</span></button>
-    </form>
-  </div>
 </header>
 {# Navigasi bawah untuk HP & tablet: menu yang paling sering dipakai sesuai peran #}
 {% if user.role == 'petugas' %}

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+  <defs>
+    <linearGradient id="front2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#1E40AF"/>
+    </linearGradient>
+    <linearGradient id="top2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#BAE6FD"/>
+      <stop offset="100%" stop-color="#7DD3FC"/>
+    </linearGradient>
+    <linearGradient id="side2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <linearGradient id="flap2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#E0F2FE"/>
+      <stop offset="100%" stop-color="#7DD3FC"/>
+    </linearGradient>
+  </defs>
+  <rect width="240" height="240" rx="48" fill="#1E3A8A"/>
+  <path d="M64 138 L120 108 L176 138 L176 178 L120 208 L64 178 Z" fill="url(#front2)"/>
+  <path d="M64 138 L120 108 L176 138 L120 162 Z" fill="url(#top2)"/>
+  <path d="M120 162 L176 138 L176 178 L120 208 Z" fill="url(#side2)"/>
+  <path d="M66 136 L88 88 L120 108 L98 142 Z" fill="url(#flap2)"/>
+  <path d="M174 136 L152 88 L120 108 L142 142 Z" fill="url(#flap2)"/>
+  <path d="M85 150 L120 132 L155 150 L120 168 Z" fill="#1E3A8A" opacity="0.3"/>
+  <path d="M64 138 L120 108 L176 138" fill="none" stroke="#E0F2FE" stroke-width="1.5" opacity="0.4"/>
+  <path d="M125 95 C138 75, 155 58, 175 48" stroke="#7DD3FC" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.75"/>
+  <path d="M140 92 C152 72, 168 58, 185 52" stroke="#BAE6FD" stroke-width="2.2" fill="none" stroke-linecap="round" opacity="0.5"/>
+  <circle cx="130" cy="88" r="4" fill="#FFFFFF"/>
+  <circle cx="148" cy="72" r="3.5" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="165" cy="58" r="3" fill="#FFFFFF" opacity="0.75"/>
+  <circle cx="140" cy="62" r="2.5" fill="#FFFFFF" opacity="0.65"/>
+  <circle cx="158" cy="48" r="2.2" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="175" cy="45" r="1.8" fill="#FFFFFF" opacity="0.4"/>
+  <circle cx="150" cy="42" r="1.5" fill="#FFFFFF" opacity="0.3"/>
+</svg>

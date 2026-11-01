@@ -1,4 +1,4 @@
-/* Monitoring Stok — JS ringan tanpa build step */
+/* flowStok — JS ringan tanpa build step */
 (function () {
   "use strict";
   const $ = (s, r = document) => r.querySelector(s);
@@ -73,7 +73,12 @@
     if (e.target.closest("[data-menu]")) {
       const tb = $("#topbar");
       tb.classList.toggle("open");
+      $$('[data-menu]').forEach((button) => button.setAttribute("aria-expanded", String(tb.classList.contains("open"))));
       if (tb.classList.contains("open")) window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    if (e.target.closest(".nav a") && $("#topbar")?.classList.contains("open")) {
+      $("#topbar").classList.remove("open");
+      $$('[data-menu]').forEach((button) => button.setAttribute("aria-expanded", "false"));
     }
     $$("details.navmore[open]").forEach((d) => { if (!d.contains(e.target)) d.open = false; });
     const close = e.target.closest("[data-close]");
@@ -346,6 +351,23 @@
       fotoWajibKosong.parentElement.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, true);
+
+  /* ---------- dialog blok/rak penyimpanan material ---------- */
+  const blockDlg = $("#dlgStockBlock");
+  if (blockDlg) {
+    const blockForm = $("#formStockBlock"), blockInput = $("#stockBlockInput");
+    document.addEventListener("click", (e) => {
+      const button = e.target.closest("[data-stock-block]");
+      if (!button) return;
+      const material = JSON.parse(button.dataset.stockBlock);
+      $("#stockBlockName").textContent = `${material.material} · ${material.deskripsi}`;
+      blockInput.value = material.blok || "";
+      blockForm.action = material.url;
+      blockDlg.showModal();
+      blockInput.focus();
+      blockInput.select();
+    });
+  }
 
   /* ---------- dialog ubah qty (penyesuaian stok) ---------- */
   const dlg = $("#dlgAdjust");
@@ -1269,6 +1291,50 @@
   window.initRekonsiliasi = function () {
     const form = $("#formRekon");
     if (!form) return;
+    const token = form.dataset.rekonToken || "preview";
+    const draftKey = `flowstok:rekonsiliasi:${token}`;
+    const checks = () => Array.from(form.elements).filter((el) =>
+      el.name === "matches" || el.name === "news" || el.name === "reviews");
+    const saveDraft = () => {
+      const state = { selected: checks().filter((el) => el.checked).map((el) => el.value), arah: {}, pihak: {} };
+      $$('[data-arah]').forEach((el) => { state.arah[el.name] = el.value; });
+      $$('[data-pihak]').forEach((el) => { state.pihak[el.name] = el.value; });
+      try { sessionStorage.setItem(draftKey, JSON.stringify(state)); } catch (_) { /* penyimpanan boleh gagal */ }
+    };
+    const restoreDraft = () => {
+      let state = null;
+      try { state = JSON.parse(sessionStorage.getItem(draftKey) || "null"); } catch (_) { return; }
+      if (!state) return;
+      const selected = new Set(state.selected || []);
+      checks().forEach((el) => { el.checked = selected.has(el.value); });
+      $$('[data-arah]').forEach((el) => {
+        if (Object.hasOwn(state.arah || {}, el.name)) el.value = state.arah[el.name];
+      });
+      $$('[data-pihak]').forEach((el) => {
+        if (Object.hasOwn(state.pihak || {}, el.name)) el.value = state.pihak[el.name];
+      });
+    };
+    restoreDraft();
+
+    const updateCount = () => {
+      const rows = $$('[data-rekon-row]');
+      const visible = rows.filter((row) => !row.hidden).length;
+      const selected = checks().filter((el) => el.checked).length;
+      const count = $("#rekonTerpilih"), shown = $("#rekonTerlihat");
+      if (count) count.textContent = selected;
+      if (shown) shown.textContent = `${visible} dari ${rows.length} baris ditampilkan`;
+      saveDraft();
+    };
+    const applyFilter = () => {
+      const query = ($("#rekonCari")?.value || "").trim().toLowerCase();
+      const status = $("#rekonStatus")?.value || "";
+      $$('[data-rekon-row]').forEach((row) => {
+        row.hidden = Boolean((query && !row.dataset.search.toLowerCase().includes(query)) ||
+          (status && row.dataset.status !== status));
+      });
+      updateCount();
+    };
+
     $$('[data-rekon-arah]').forEach((blok) => {
       const arah = $('[data-arah]', blok), pihak = $('[data-pihak]', blok);
       const indeks = arah.name.replace("arah_", "");
@@ -1278,9 +1344,32 @@
         pihak.hidden = !transfer;
         pihak.required = transfer;
         if (arah.value && cek) cek.checked = true;
+        updateCount();
       };
       arah.addEventListener("change", atur);
+      pihak.addEventListener("input", updateCount);
       atur();
+    });
+    checks().forEach((el) => el.addEventListener("change", updateCount));
+    $("#rekonCari")?.addEventListener("input", applyFilter);
+    $("#rekonStatus")?.addEventListener("change", applyFilter);
+    $("#rekonPilihAman")?.addEventListener("click", () => {
+      checks().forEach((el) => { if (el.dataset.rekonSafe === "1") el.checked = true; });
+      updateCount(); toast("Semua pasangan otomatis yang aman sudah dipilih");
+    });
+    $("#rekonPilihLengkap")?.addEventListener("click", () => {
+      $$('[data-rekon-arah]').forEach((blok) => {
+        const arah = $('[data-arah]', blok), pihak = $('[data-pihak]', blok);
+        const transfer = arah.value === "transfer_masuk" || arah.value === "transfer_keluar";
+        if (!arah.value || (transfer && !pihak.value.trim())) return;
+        const indeks = arah.name.replace("arah_", "");
+        const cek = $(`input[value="${indeks}"][form="formRekon"]`);
+        if (cek) cek.checked = true;
+      });
+      updateCount(); toast("Semua keputusan arah yang lengkap sudah dipilih");
+    });
+    $("#rekonKosongkan")?.addEventListener("click", () => {
+      checks().forEach((el) => { el.checked = false; }); updateCount();
     });
     form.addEventListener("submit", (e) => {
       const salah = [];
@@ -1289,17 +1378,22 @@
         const arah = $(`[name="arah_${cek.value}"]`);
         if (!arah) return;
         const pihak = $(`[name="pihak_${cek.value}"]`);
-        if (!arah.value) salah.push(`baris pilihan ${cek.value}: arah belum dipilih`);
+        const rowNumber = cek.closest("tr")?.querySelector(".c-row")?.textContent?.trim() || cek.value;
+        if (!arah.value) salah.push(`baris ${rowNumber}: arah belum dipilih`);
         if ((arah.value === "transfer_masuk" || arah.value === "transfer_keluar") && !pihak.value.trim()) {
-          salah.push(`baris pilihan ${cek.value}: kebun asal/tujuan belum diisi`);
+          salah.push(`baris ${rowNumber}: kebun asal/tujuan belum diisi`);
         }
       });
+      saveDraft();
       if (salah.length) {
         e.preventDefault();
         e.stopImmediatePropagation();
         toast("Verifikasi transfer belum lengkap · " + salah.join(" · "), "error");
       }
     }, true);
+    applyFilter();
+    const errorRow = $('.rekon-error');
+    if (errorRow) errorRow.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   /* ---------- master: ubah kategori / minimum langsung di tabel ---------- */
